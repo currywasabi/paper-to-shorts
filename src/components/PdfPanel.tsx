@@ -4,7 +4,8 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 
 import { MAX_FILE_SIZE, validatePdfFile } from '../lib/pdfFile';
 import { extractPdfContent, type Section } from '../lib/extractPdfContent';
-import { summarizeScript, type Scene } from '../lib/summarizeScript';
+import { summarizeScript } from '../lib/summarizeScript';
+import type { Scene } from '../schema';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -25,6 +26,7 @@ function PdfPanel() {
 
   const [summarizing, setSummarizing] = useState(false);
   const [summarizeError, setSummarizeError] = useState<string | null>(null);
+  const [title, setTitle] = useState<string | null>(null);
   const [scenes, setScenes] = useState<Scene[] | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -55,6 +57,7 @@ function PdfPanel() {
     setExtractError(null);
     setSections(null);
     setSummarizeError(null);
+    setTitle(null);
     setScenes(null);
     if (inputRef.current) inputRef.current.value = '';
   }
@@ -83,10 +86,12 @@ function PdfPanel() {
 
     setSummarizing(true);
     setSummarizeError(null);
+    setTitle(null);
     setScenes(null);
 
     try {
       const result = await summarizeScript(file);
+      setTitle(result.title);
       setScenes(result.scenes);
     } catch (err) {
       setSummarizeError(err instanceof Error ? err.message : '대본 생성 중 오류가 발생했습니다.');
@@ -243,13 +248,17 @@ function PdfPanel() {
 
           {scenes && (
             <div className="extract-results">
-              <h2>쇼츠 대본 ({scenes.reduce((sum, s) => sum + s.durationHint, 0)}초)</h2>
+              <h2>
+                {title} ({scenes.reduce((sum, s) => sum + s.duration, 0).toFixed(1)}초)
+              </h2>
               {scenes.map((s, i) => (
                 <div key={i} className="scene">
-                  <span className="scene-duration">{s.durationHint}초</span>
+                  <span className="scene-duration">{s.duration}초</span>
                   <div>
-                    <p className="scene-caption">{s.caption}</p>
-                    <p>{s.narration}</p>
+                    <p>{s.text}</p>
+                    {s.blocks.length > 0 && (
+                      <p className="scene-caption">{s.blocks.map((b) => b.type).join(', ')}</p>
+                    )}
                   </div>
                 </div>
               ))}

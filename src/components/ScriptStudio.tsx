@@ -15,17 +15,28 @@ const DUMMY_SCRIPT: ShortScript = {
     {
       text: '이 논문 결과 보고 진짜 놀랐음. 조건 C가 기존보다 압도적으로 좋았음.',
       duration: 4,
-      cut: { page: 1, startOffset: 0, duration: 4 },
+      blocks: [{ type: 'cut', page: 1, startOffset: 0, duration: 4 }],
     },
     {
+      // cut + attachment + sound + meme을 동시에 조합한 예시. sound는 attachment와 무관하게
+      // 독립 블록이라, 원하면 같은 startOffset을 줘서 등장 타이밍만 맞추면 된다.
       text: '핵심 수식은 이거 하나. 이것만 알면 나머지는 다 부가설명임.',
       duration: 5,
-      cut: { page: 2, startOffset: 0, duration: 5 },
-      attachment: { text: 'S(x) = 0.5·m(x)²+7', startOffset: 1.2, duration: 3.5, sound: 'pop' },
+      blocks: [
+        { type: 'cut', page: 2, startOffset: 0, duration: 5 },
+        { type: 'attachment', text: 'S(x) = 0.5·m(x)²+7', startOffset: 1.2, duration: 3.5 },
+        { type: 'sound', name: 'pew', startOffset: 1.2, duration: 1.2, volume: 0.35 },
+        { type: 'meme', image: 'smilepepe.webp', startOffset: 0, duration: 5 },
+      ],
     },
     {
+      // cut 없이 meme + 효과음 두 개만 있는, 배경이 없는 장면도 가능하다는 예시.
       text: '결론적으로 이 방법이 앞으로 표준이 될 수도 있다는 거.',
       duration: 3,
+      blocks: [
+        { type: 'meme', image: 'dancingpepe1.gif', startOffset: 0.3, duration: 2.5 },
+        { type: 'sound', name: 'siu', startOffset: 0.3, duration: 1.5, volume: 0.3 },
+      ],
     },
   ],
 };
