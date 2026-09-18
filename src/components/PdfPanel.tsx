@@ -3,7 +3,6 @@ import * as pdfjsLib from 'pdfjs-dist';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 
 import { MAX_FILE_SIZE, validatePdfFile } from '../lib/pdfFile';
-import { extractPdfContent, type Section } from '../lib/extractPdfContent';
 import { summarizeScript } from '../lib/summarizeScript';
 import type { ShortScript } from '../schema';
 
@@ -17,17 +16,13 @@ export interface PdfPanelProps {
   onScriptGenerated?: (script: ShortScript) => void;
 }
 
-/** PDF 업로드 → 뷰어 → 텍스트 추출 → 쇼츠 대본 생성. 기존 기능 그대로, 위치만 사이드바로 이동. */
+/** PDF 업로드 → 뷰어 → 쇼츠 대본 생성. 기존 기능 그대로, 위치만 사이드바로 이동. */
 function PdfPanel({ onScriptGenerated }: PdfPanelProps) {
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [pageNum, setPageNum] = useState(1);
-
-  const [extracting, setExtracting] = useState(false);
-  const [extractError, setExtractError] = useState<string | null>(null);
-  const [sections, setSections] = useState<Section[] | null>(null);
 
   const [summarizing, setSummarizing] = useState(false);
   const [summarizeError, setSummarizeError] = useState<string | null>(null);
@@ -58,30 +53,9 @@ function PdfPanel({ onScriptGenerated }: PdfPanelProps) {
     setPdf(null);
     setError(null);
     setPageNum(1);
-    setExtractError(null);
-    setSections(null);
     setSummarizeError(null);
     setGeneratedScript(null);
     if (inputRef.current) inputRef.current.value = '';
-  }
-
-  async function handleExtract() {
-    if (!pdf) return;
-
-    setExtracting(true);
-    setExtractError(null);
-    setSections(null);
-    setSummarizeError(null);
-    setGeneratedScript(null);
-
-    try {
-      const result = await extractPdfContent(pdf);
-      setSections(result.sections);
-    } catch (err) {
-      setExtractError(err instanceof Error ? err.message : '추출 중 오류가 발생했습니다.');
-    } finally {
-      setExtracting(false);
-    }
   }
 
   async function handleSummarize() {
@@ -224,24 +198,6 @@ function PdfPanel({ onScriptGenerated }: PdfPanelProps) {
 
       {pdf && (
         <div className="extract">
-          <button type="button" onClick={handleExtract} disabled={extracting}>
-            {extracting ? '추출 중...' : '텍스트 추출'}
-          </button>
-
-          {extractError && <p className="error">{extractError}</p>}
-
-          {sections && (
-            <div className="extract-results">
-              <h2>추출된 텍스트</h2>
-              {sections.map((s, i) => (
-                <details key={i}>
-                  <summary>{s.heading}</summary>
-                  <p>{s.content || '(텍스트 없음)'}</p>
-                </details>
-              ))}
-            </div>
-          )}
-
           <button type="button" onClick={handleSummarize} disabled={summarizing}>
             {summarizing ? '대본 생성 중...' : '쇼츠 대본 생성'}
           </button>
