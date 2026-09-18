@@ -88,3 +88,55 @@
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+.extract {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.extract > button {
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.extract > button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.extract-results {
+  width: 100%;
+  text-align: left;
+}
+
+.extract-results h2 {
+  font-size: 16px;
+  margin: 0 0 8px;
+}
+
+.extract-results details {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+.extract-results summary {
+  cursor: pointer;
+}
+
+.extract-results p {
+  white-space: pre-wrap;
+  margin-top: 8px;
+}

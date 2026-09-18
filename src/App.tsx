@@ -4,6 +4,7 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 
 import './App.css';
 import { MAX_FILE_SIZE, validatePdfFile } from './lib/pdfFile';
+import { extractPdfContent, type Section } from './lib/extractPdfContent';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -16,6 +17,10 @@ function App() {
   const [dragging, setDragging] = useState(false);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [pageNum, setPageNum] = useState(1);
+
+  const [extracting, setExtracting] = useState(false);
+  const [extractError, setExtractError] = useState<string | null>(null);
+  const [sections, setSections] = useState<Section[] | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -42,7 +47,26 @@ function App() {
     setPdf(null);
     setError(null);
     setPageNum(1);
+    setExtractError(null);
+    setSections(null);
     if (inputRef.current) inputRef.current.value = '';
+  }
+
+  async function handleExtract() {
+    if (!pdf) return;
+
+    setExtracting(true);
+    setExtractError(null);
+    setSections(null);
+
+    try {
+      const result = await extractPdfContent(pdf);
+      setSections(result.sections);
+    } catch (err) {
+      setExtractError(err instanceof Error ? err.message : '추출 중 오류가 발생했습니다.');
+    } finally {
+      setExtracting(false);
+    }
   }
 
   // 파일이 바뀌면 pdfjs로 로드
@@ -164,6 +188,28 @@ function App() {
           </div>
         )}
       </div>
+
+      {pdf && (
+        <div className="extract">
+          <button type="button" onClick={handleExtract} disabled={extracting}>
+            {extracting ? '추출 중...' : '텍스트 추출'}
+          </button>
+
+          {extractError && <p className="error">{extractError}</p>}
+
+          {sections && (
+            <div className="extract-results">
+              <h2>추출된 텍스트</h2>
+              {sections.map((s, i) => (
+                <details key={i}>
+                  <summary>{s.heading}</summary>
+                  <p>{s.content || '(텍스트 없음)'}</p>
+                </details>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
