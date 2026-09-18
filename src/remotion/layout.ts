@@ -7,7 +7,9 @@ export interface PositionedScene {
 }
 
 export function toFrames(seconds: number, fps: number): number {
-  return Math.max(1, Math.round(seconds * fps));
+  // 내림으로 반올림되면 오디오가 있는 Sequence가 실제 길이보다 짧아져서 끝이 잘릴 수 있다 —
+  // 그래서 round가 아니라 ceil로 항상 여유 있게 잡는다.
+  return Math.max(1, Math.ceil(seconds * fps));
 }
 
 export function totalDurationInFrames(scenes: Scene[], fps: number): number {

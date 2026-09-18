@@ -70,9 +70,13 @@ export const sceneSchema = z
   .object({
     // TTS로 읽을 나레이션. PDF 내용을 그대로 옮기지 말고 결론/반전, 설명, 임팩트, 펀치라인 등으로 각색.
     text: z.string(),
-    duration: z.number().min(1.5).max(15),
+    // Gemini가 처음엔 추정치로 채우지만, TTS 합성 후 실제 음성 길이로 서버에서 덮어쓴다.
+    // 그래서 저작 시점 추정치보다 범위를 넉넉하게 둔다(진짜 이상치만 걸러내는 용도).
+    duration: z.number().min(0.5).max(20),
     // cut/attachment/meme/sound/effect를 자유 조합. 순서·개수·중첩 제약 없음.
     blocks: z.array(blockSchema).default([]),
+    // TTS로 합성된 나레이션 오디오 URL. 서버가 채워준다 — 수동 작성 스크립트는 없어도 된다.
+    audioUrl: z.string().optional(),
   })
   // 프롬프트에서도 같은 규칙을 요구하지만, Gemini 응답이 그 규칙을 어겨도 통과되지 않도록 여기서 한 번 더 막는다.
   .refine((scene) => scene.blocks.every((block) => block.startOffset + block.duration <= scene.duration), {

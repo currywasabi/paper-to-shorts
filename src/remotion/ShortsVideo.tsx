@@ -1,6 +1,6 @@
 import {
   AbsoluteFill,
-  Audio,
+  Html5Audio,
   Img,
   Sequence,
   spring,
@@ -88,22 +88,21 @@ function AttachmentView({ attachment }: { attachment: AttachmentBlock }) {
   );
 }
 
-/** public/assets/images의 밈 이미지를 화면 하단 구석에 붙인다. */
+/** public/assets/images의 밈 이미지를 화면 중앙에 줌인하며 띄운다. */
 function MemeView({ meme }: { meme: MemeBlock }) {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const scale = spring({ frame, fps, config: { damping: 11, stiffness: 200 } });
+
   return (
-    <AbsoluteFill
-      style={{
-        alignItems: "flex-end",
-        justifyContent: "flex-end",
-        padding: "0 24px 44px 0",
-      }}
-    >
+    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center" }}>
       <Img
         src={staticFile(`assets/images/${meme.image}`)}
         style={{
-          width: 190,
-          borderRadius: 14,
-          boxShadow: "0 8px 22px rgba(0,0,0,0.55)",
+          width: 520,
+          transform: `scale(${scale})`,
+          borderRadius: 20,
+          boxShadow: "0 14px 36px rgba(0,0,0,0.6)",
         }}
       />
     </AbsoluteFill>
@@ -116,7 +115,7 @@ function SoundView({ sound }: { sound: SoundBlock }) {
   const { fps } = useVideoConfig();
 
   return (
-    <Audio
+    <Html5Audio
       src={staticFile(`assets/sounds/${sound.name}.mp3`)}
       trimBefore={0}
       trimAfter={Math.round(fps * sound.duration)}
@@ -147,6 +146,9 @@ function SceneView({ scene }: { scene: Scene }) {
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#0f0f14" }}>
+      {/* 나레이션 TTS. scene.duration이 이미 이 오디오의 실측 길이라 트리밍이 필요 없다. */}
+      {scene.audioUrl && <Html5Audio src={scene.audioUrl} />}
+
       {scene.blocks.map((block, i) => (
         <Sequence
           key={i}

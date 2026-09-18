@@ -3,7 +3,16 @@ import { FunctionsHttpError } from '@supabase/supabase-js';
 import { getSupabaseClient } from './supabaseClient';
 import { shortScriptSchema, type ShortScript } from '../schema';
 
-const REQUEST_TIMEOUT_MS = 90_000;
+// Gemini 분석 + 씬별 Typecast TTS 합성(동시 2개 제한)까지 한 요청 안에서 순차적으로 처리하므로
+// 씬이 많을수록 오래 걸린다 — 기존 90초로는 부족해서 넉넉하게 잡는다.
+const REQUEST_TIMEOUT_MS = 240_000;
+
+// 서버(supabase/functions/summarize-script/index.ts)가 붙여 보내는 source 태그를 사람이 읽을 라벨로.
+const UPSTREAM_SOURCE_LABEL: Record<string, string> = {
+  gemini: 'Gemini',
+  typecast: 'Typecast',
+  storage: 'Storage',
+};
 
 async function fileToBase64(file: File): Promise<string> {
   const buffer = await file.arrayBuffer();
@@ -23,7 +32,10 @@ async function describeError(error: unknown): Promise<string> {
     try {
       const body = await error.context.json();
       console.warn('[summarize-script] 실패 응답', body);
-      if (typeof body?.error === 'string') return body.error;
+      if (typeof body?.error === 'string') {
+        const label = typeof body?.source === 'string' ? UPSTREAM_SOURCE_LABEL[body.source] : undefined;
+        return label ? `[${label}] ${body.error}` : body.error;
+      }
     } catch {
       // 응답 본문이 JSON이 아니면 기본 메시지로 폴백
     }

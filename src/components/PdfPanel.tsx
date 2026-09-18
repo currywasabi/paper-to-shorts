@@ -11,6 +11,14 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url,
 ).toString();
 
+// summarize-script는 한 요청 안에서 PDF 업로드 → Gemini 분석 → 씬별 TTS 합성을 순서대로 처리한다.
+// 서버가 중간 진행 상황을 스트리밍해주진 않으니, 각 단계가 보통 걸리는 시간을 기준으로 대략 흉내만 낸다.
+const SUMMARIZE_STAGES = [
+  { afterMs: 0, label: 'PDF를 Gemini에 업로드하는 중...' },
+  { afterMs: 3_000, label: 'Gemini가 대본을 작성하는 중... (20초 안팎)' },
+  { afterMs: 23_000, label: 'Typecast로 나레이션 음성 합성 중... (동시 2개씩 순차 처리)' },
+] as const;
+
 export interface PdfPanelProps {
   // 대본 생성이 끝나면 원본 JSON을 그대로 넘긴다 — ScriptStudio가 이걸로 에디터/프리뷰를 채운다.
   onScriptGenerated?: (script: ShortScript) => void;
@@ -25,6 +33,7 @@ function PdfPanel({ onScriptGenerated }: PdfPanelProps) {
   const [pageNum, setPageNum] = useState(1);
 
   const [summarizing, setSummarizing] = useState(false);
+  const [summarizeStage, setSummarizeStage] = useState<string | null>(null);
   const [summarizeError, setSummarizeError] = useState<string | null>(null);
   const [generatedScript, setGeneratedScript] = useState<ShortScript | null>(null);
 
@@ -54,6 +63,7 @@ function PdfPanel({ onScriptGenerated }: PdfPanelProps) {
     setError(null);
     setPageNum(1);
     setSummarizeError(null);
+    setSummarizeStage(null);
     setGeneratedScript(null);
     if (inputRef.current) inputRef.current.value = '';
   }
@@ -64,6 +74,11 @@ function PdfPanel({ onScriptGenerated }: PdfPanelProps) {
     setSummarizing(true);
     setSummarizeError(null);
     setGeneratedScript(null);
+    setSummarizeStage(SUMMARIZE_STAGES[0].label);
+
+    const timers = SUMMARIZE_STAGES.slice(1).map(({ afterMs, label }) =>
+      setTimeout(() => setSummarizeStage(label), afterMs),
+    );
 
     try {
       const result = await summarizeScript(file);
@@ -72,7 +87,9 @@ function PdfPanel({ onScriptGenerated }: PdfPanelProps) {
     } catch (err) {
       setSummarizeError(err instanceof Error ? err.message : '대본 생성 중 오류가 발생했습니다.');
     } finally {
+      timers.forEach(clearTimeout);
       setSummarizing(false);
+      setSummarizeStage(null);
     }
   }
 
@@ -199,8 +216,10 @@ function PdfPanel({ onScriptGenerated }: PdfPanelProps) {
       {pdf && (
         <div className="extract">
           <button type="button" onClick={handleSummarize} disabled={summarizing}>
-            {summarizing ? '대본 생성 중...' : '쇼츠 대본 생성'}
+            {summarizing ? '생성 중...' : '쇼츠 대본 생성'}
           </button>
+
+          {summarizing && summarizeStage && <p className="scene-duration">{summarizeStage}</p>}
 
           {summarizeError && <p className="error">{summarizeError}</p>}
 

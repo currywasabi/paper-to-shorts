@@ -9,13 +9,25 @@ import { withSupabase } from "@supabase/server";
 const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-3.5-flash";
 const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
 
+// Typecast TTS. 목소리는 "필재" 고정 — https://typecast.ai/docs/llms.txt 참고.
+const TYPECAST_API_KEY = Deno.env.get("TYPECAST_API_KEY");
+const TYPECAST_MODEL = "ssfm-v30";
+const TYPECAST_VOICE_ID = "tc_68257f68bc6e3c161ab5078d";
+// Typecast 동시 요청 한도가 2라서, 씬이 몇 개든 이 값을 넘겨 동시에 때리지 않는다.
+const TYPECAST_MAX_CONCURRENCY = 2;
+
+// 합성된 나레이션 오디오를 올려두는 공개 버킷. Player가 브라우저에서 바로 재생하므로 public으로 둔다.
+const NARRATION_BUCKET = "narration-audio";
+
+// 씬이 끝난 뒤 다음 씬으로 넘어가기 전 숨 돌릴 틈. 트리밍으로 앞뒤를 깎는 대신 여유를 더 준다.
+const NARRATION_GAP_SECONDS = 0.1;
+
 // 클라이언트가 20MB 원본 업로드를 막고 있어(base64로 약 27MB), 여유를 두고 40MB로 방어.
 const MAX_BASE64_LENGTH = 40 * 1024 * 1024;
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -60,6 +72,8 @@ interface Scene {
   text: string;
   duration: number;
   blocks: Block[];
+  // TTS 합성 후 채워진다. Gemini에게 요청하지 않는다.
+  audioUrl?: string;
 }
 
 interface SummarizeResult {
@@ -68,16 +82,7 @@ interface SummarizeResult {
 }
 
 // public/assets 에 실제로 있는 파일과 반드시 일치해야 한다 (src/schema.ts의 SOUND_NAMES/MEME_IMAGE_NAMES 참고).
-const SOUND_NAMES = [
-  "adrian",
-  "brain",
-  "discord",
-  "faaah",
-  "fbi",
-  "pew",
-  "siu",
-  "wow",
-];
+const SOUND_NAMES = ["adrian", "brain", "discord", "faaah", "fbi", "pew", "siu", "wow"];
 const MEME_IMAGE_NAMES = [
   "cryingpepe.jpg",
   "dancingpepe1.gif",
@@ -93,21 +98,13 @@ const timedProps = {
 
 const CUT_BLOCK_SCHEMA = {
   type: "object",
-  properties: {
-    type: { type: "string", enum: ["cut"] },
-    page: { type: "integer" },
-    ...timedProps,
-  },
+  properties: { type: { type: "string", enum: ["cut"] }, page: { type: "integer" }, ...timedProps },
   required: ["type", "page", "startOffset", "duration"],
 };
 
 const ATTACHMENT_BLOCK_SCHEMA = {
   type: "object",
-  properties: {
-    type: { type: "string", enum: ["attachment"] },
-    text: { type: "string" },
-    ...timedProps,
-  },
+  properties: { type: { type: "string", enum: ["attachment"] }, text: { type: "string" }, ...timedProps },
   required: ["type", "text", "startOffset", "duration"],
 };
 
@@ -146,12 +143,7 @@ const RESPONSE_SCHEMA = {
           blocks: {
             type: "array",
             items: {
-              anyOf: [
-                CUT_BLOCK_SCHEMA,
-                ATTACHMENT_BLOCK_SCHEMA,
-                MEME_BLOCK_SCHEMA,
-                SOUND_BLOCK_SCHEMA,
-              ],
+              anyOf: [CUT_BLOCK_SCHEMA, ATTACHMENT_BLOCK_SCHEMA, MEME_BLOCK_SCHEMA, SOUND_BLOCK_SCHEMA],
             },
           },
         },
@@ -195,6 +187,9 @@ title은 영상 상단에 고정으로 표시되는 짧고 강렬한 제목이�
   duration은 1.5~15초 사이여야 한다.
 - 모든 scene의 duration 합이 대략 60초 안팎이 되도록 분량을 조절한다.
 - scene은 최대 15개를 넘기지 않는다.
+- 참고: 여기서 적는 duration은 block 배치를 위한 추정치일 뿐이다. 실제 값은 TTS로 text를
+  합성한 뒤 그 음성 길이로 서버가 자동으로 덮어쓴다. 그러니 text 문장 길이와 리듬을
+  최대한 자연스럽게, 실제로 소리 내어 읽었을 때의 호흡에 맞게 써라.
 
 [정확성]
 입력 자료에 없는 사실, 숫자, 결과, 인용, 수식 등을 만들지 않는다.
@@ -240,6 +235,16 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
+// 호출한 쪽(Gemini/Typecast/Storage) 이 뭔지 클라이언트가 구분할 수 있도록 매번 source를 붙여서 던진다.
+type UpstreamSource = "gemini" | "typecast" | "storage";
+
+function upstreamError(source: UpstreamSource, message: string, status = 502): Response {
+  return new Response(JSON.stringify({ error: message, source }), {
+    status,
+    headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+  });
+}
+
 function base64ToBytes(base64: string): Uint8Array {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
@@ -249,28 +254,25 @@ function base64ToBytes(base64: string): Uint8Array {
 
 /** Files API로 PDF를 업로드하고 파일 URI를 받는다(resumable upload 프로토콜). */
 async function uploadPdf(pdfBytes: Uint8Array): Promise<string> {
-  const startRes = await fetch(
-    "https://generativelanguage.googleapis.com/upload/v1beta/files",
-    {
-      method: "POST",
-      headers: {
-        "x-goog-api-key": GEMINI_API_KEY!,
-        "X-Goog-Upload-Protocol": "resumable",
-        "X-Goog-Upload-Command": "start",
-        "X-Goog-Upload-Header-Content-Length": String(pdfBytes.length),
-        "X-Goog-Upload-Header-Content-Type": "application/pdf",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ file: { display_name: "paper.pdf" } }),
+  const startRes = await fetch("https://generativelanguage.googleapis.com/upload/v1beta/files", {
+    method: "POST",
+    headers: {
+      "x-goog-api-key": GEMINI_API_KEY!,
+      "X-Goog-Upload-Protocol": "resumable",
+      "X-Goog-Upload-Command": "start",
+      "X-Goog-Upload-Header-Content-Length": String(pdfBytes.length),
+      "X-Goog-Upload-Header-Content-Type": "application/pdf",
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify({ file: { display_name: "paper.pdf" } }),
+  });
 
   if (!startRes.ok) {
-    throw new Error(`파일 업로드 시작 실패: ${await startRes.text()}`);
+    throw upstreamError("gemini", `파일 업로드 시작 실패: ${await startRes.text()}`);
   }
 
   const uploadUrl = startRes.headers.get("x-goog-upload-url");
-  if (!uploadUrl) throw new Error("업로드 URL을 받지 못했습니다.");
+  if (!uploadUrl) throw upstreamError("gemini", "업로드 URL을 받지 못했습니다.");
 
   const uploadRes = await fetch(uploadUrl, {
     method: "POST",
@@ -283,13 +285,12 @@ async function uploadPdf(pdfBytes: Uint8Array): Promise<string> {
   });
 
   if (!uploadRes.ok) {
-    throw new Error(`파일 업로드 실패: ${await uploadRes.text()}`);
+    throw upstreamError("gemini", `파일 업로드 실패: ${await uploadRes.text()}`);
   }
 
   const uploadJson = await uploadRes.json();
   const uri = uploadJson.file?.uri;
-  if (typeof uri !== "string")
-    throw new Error("업로드 응답에 파일 URI가 없습니다.");
+  if (typeof uri !== "string") throw upstreamError("gemini", "업로드 응답에 파일 URI가 없습니다.");
   return uri;
 }
 
@@ -319,32 +320,189 @@ async function callGemini(fileUri: string): Promise<SummarizeResult> {
 
   if (!res.ok) {
     const detail = await res.text();
-    throw new Response(
-      JSON.stringify({ error: "Gemini API 호출 실패", detail }),
-      {
-        status: res.status === 429 ? 429 : 502,
-        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-      },
-    );
+    throw upstreamError("gemini", `Gemini API 호출 실패: ${detail}`, res.status === 429 ? 429 : 502);
   }
 
   const geminiJson = await res.json();
   const resultText = geminiJson.candidates?.[0]?.content?.parts?.[0]?.text;
   if (typeof resultText !== "string") {
-    throw new Response(
-      JSON.stringify({ error: "Gemini 응답에 텍스트가 없습니다." }),
-      {
-        status: 502,
-        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-      },
-    );
+    throw upstreamError("gemini", "Gemini 응답에 텍스트가 없습니다.");
   }
 
   return JSON.parse(resultText);
 }
 
+/** 동시 실행 개수를 concurrency로 제한하는 최소한의 큐. Typecast 동시 요청 한도(2) 방어용. */
+function createLimiter(concurrency: number) {
+  let active = 0;
+  const queue: (() => void)[] = [];
+
+  return function limit<T>(fn: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const run = () => {
+        active++;
+        fn()
+          .then(resolve, reject)
+          .finally(() => {
+            active--;
+            const next = queue.shift();
+            if (next) next();
+          });
+      };
+      if (active < concurrency) run();
+      else queue.push(run);
+    });
+  };
+}
+
+/** WAV(RIFF) 헤더를 직접 파싱해서 길이를 구한다 — Typecast 응답에 duration 필드가 없다. */
+function getWavDurationSeconds(bytes: Uint8Array): number {
+  if (bytes.length < 12) {
+    throw upstreamError("typecast", "받은 오디오가 올바른 WAV 파일이 아닙니다.");
+  }
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let offset = 12; // "RIFF"(4) + size(4) + "WAVE"(4) 다음부터 청크 스캔
+  let sampleRate = 0;
+  let channels = 0;
+  let bitsPerSample = 0;
+  let dataSize = 0;
+
+  while (offset + 8 <= bytes.length) {
+    const chunkId = String.fromCharCode(...bytes.subarray(offset, offset + 4));
+    const chunkSize = view.getUint32(offset + 4, true);
+    const bodyStart = offset + 8;
+
+    if (chunkId === "fmt ") {
+      channels = view.getUint16(bodyStart + 2, true);
+      sampleRate = view.getUint32(bodyStart + 4, true);
+      bitsPerSample = view.getUint16(bodyStart + 14, true);
+      offset = bodyStart + chunkSize + (chunkSize % 2); // 청크는 짝수 바이트로 정렬된다
+    } else if (chunkId === "data") {
+      // 헤더에 적힌 chunkSize를 믿지 않는다 — 스트리밍으로 합성하는 TTS 엔진은 완료 전 추정치로
+      // 헤더를 먼저 써두고 끝난 뒤 재기록하지 않는 경우가 있어서, 실제보다 작게 적힐 수 있다.
+      // data는 보통 파일의 마지막 청크이므로 남은 바이트 전부를 오디오로 취급해 실제 길이를 구한다.
+      dataSize = bytes.length - bodyStart;
+      break;
+    } else {
+      offset = bodyStart + chunkSize + (chunkSize % 2);
+    }
+  }
+
+  if (!sampleRate || !channels || !bitsPerSample || !dataSize) {
+    throw upstreamError("typecast", "WAV 헤더에서 길이 정보를 읽지 못했습니다.");
+  }
+
+  const byteRate = sampleRate * channels * (bitsPerSample / 8);
+  return dataSize / byteRate;
+}
+
+/** 씬 나레이션 하나를 Typecast로 합성한다. 429(동시성/rate limit)는 한 번만 재시도한다. */
+async function synthesizeSceneAudio(text: string, attempt = 0): Promise<Uint8Array> {
+  const res = await fetch("https://api.typecast.ai/v1/text-to-speech", {
+    method: "POST",
+    headers: { "X-API-KEY": TYPECAST_API_KEY!, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: TYPECAST_MODEL,
+      voice_id: TYPECAST_VOICE_ID,
+      text,
+      language: "kor",
+      // remove_silence_ms를 걸면 무음 감지가 과하게 잡혀서 발화 앞뒤가 잘리는 문제가 있었다.
+      // 트리밍 대신 attachNarration에서 NARRATION_GAP_SECONDS만큼 뒤에 여유를 붙이는 쪽으로 바꿨다.
+      output: { audio_format: "wav", remove_silence_ms: 0 },
+    }),
+  });
+
+  if (res.status === 429 && attempt === 0) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    return synthesizeSceneAudio(text, attempt + 1);
+  }
+
+  if (!res.ok) {
+    const detail = await res.text();
+    throw upstreamError(
+      "typecast",
+      `Typecast TTS 호출 실패(${res.status}): ${detail}`,
+      res.status === 429 ? 429 : 502,
+    );
+  }
+
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+// deno-lint-ignore no-explicit-any
+async function ensureNarrationBucket(supabaseAdmin: any) {
+  const { data } = await supabaseAdmin.storage.getBucket(NARRATION_BUCKET);
+  if (data) return;
+
+  const { error } = await supabaseAdmin.storage.createBucket(NARRATION_BUCKET, { public: true });
+  if (error && !/already exists/i.test(error.message ?? "")) {
+    throw upstreamError("storage", `오디오 저장용 버킷 생성 실패: ${error.message}`);
+  }
+}
+
+async function uploadNarrationAudio(
+  // deno-lint-ignore no-explicit-any
+  supabaseAdmin: any,
+  path: string,
+  bytes: Uint8Array,
+): Promise<string> {
+  const { error } = await supabaseAdmin.storage
+    .from(NARRATION_BUCKET)
+    .upload(path, bytes, { contentType: "audio/wav", upsert: true });
+  if (error) throw upstreamError("storage", `오디오 업로드 실패: ${error.message}`);
+
+  const { data } = supabaseAdmin.storage.from(NARRATION_BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}
+
+// sound 블록은 스키마상 duration 최소 0.5초, 나머지 블록은 0.1초가 최소다(src/schema.ts 참고).
+function minBlockDuration(block: Block): number {
+  return block.type === "sound" ? 0.5 : 0.1;
+}
+
+/** scene.duration이 TTS 실측값으로 바뀌면서 넘치게 된 block은 잘라내거나 통째로 버린다. */
+function reconcileBlocks(blocks: Block[], sceneDuration: number): Block[] {
+  const kept: Block[] = [];
+  for (const block of blocks) {
+    const available = sceneDuration - block.startOffset;
+    if (available < minBlockDuration(block)) continue;
+    kept.push({ ...block, duration: Math.min(block.duration, available) });
+  }
+  return kept;
+}
+
+/** Gemini가 만든 scene들에 실제 TTS 오디오를 입히고, duration/blocks를 그 길이에 맞게 고정한다. */
+// deno-lint-ignore no-explicit-any
+async function attachNarration(scenes: Scene[], supabaseAdmin: any): Promise<Scene[]> {
+  await ensureNarrationBucket(supabaseAdmin);
+
+  const requestId = crypto.randomUUID();
+  const limit = createLimiter(TYPECAST_MAX_CONCURRENCY);
+
+  return Promise.all(
+    scenes.map((scene, i) =>
+      limit(async () => {
+        const audioBytes = await synthesizeSceneAudio(scene.text);
+        // 오디오 자체는 트리밍하지 않은 실제 길이. scene.duration에는 다음 씬으로 넘어가기
+        // 전 숨 돌릴 틈(NARRATION_GAP_SECONDS)을 더해서, 음성이 씬 끝에 딱 붙어 끊기지 않게 한다.
+        const audioDurationSeconds = getWavDurationSeconds(audioBytes);
+        const sceneDuration = audioDurationSeconds + NARRATION_GAP_SECONDS;
+        const audioUrl = await uploadNarrationAudio(supabaseAdmin, `${requestId}/${i}.wav`, audioBytes);
+
+        return {
+          ...scene,
+          duration: sceneDuration,
+          blocks: reconcileBlocks(scene.blocks, sceneDuration),
+          audioUrl,
+        };
+      })
+    ),
+  );
+}
+
 export default {
-  fetch: withSupabase({ auth: ["publishable"] }, async (req) => {
+  fetch: withSupabase({ auth: ["publishable"] }, async (req, ctx) => {
     if (req.method === "OPTIONS") {
       return new Response(null, { headers: CORS_HEADERS });
     }
@@ -354,10 +512,10 @@ export default {
     }
 
     if (!GEMINI_API_KEY) {
-      return jsonResponse(
-        { error: "GEMINI_API_KEY가 설정되지 않았습니다." },
-        500,
-      );
+      return jsonResponse({ error: "GEMINI_API_KEY가 설정되지 않았습니다." }, 500);
+    }
+    if (!TYPECAST_API_KEY) {
+      return jsonResponse({ error: "TYPECAST_API_KEY가 설정되지 않았습니다." }, 500);
     }
 
     let body: SummarizeRequestBody;
@@ -369,10 +527,7 @@ export default {
 
     const pdfBase64 = body?.pdfBase64;
     if (typeof pdfBase64 !== "string" || pdfBase64.length === 0) {
-      return jsonResponse(
-        { error: "pdfBase64: string 형식이 필요합니다." },
-        400,
-      );
+      return jsonResponse({ error: "pdfBase64: string 형식이 필요합니다." }, 400);
     }
     if (pdfBase64.length > MAX_BASE64_LENGTH) {
       return jsonResponse({ error: "PDF 용량이 너무 큽니다." }, 400);
@@ -382,8 +537,9 @@ export default {
       const pdfBytes = base64ToBytes(pdfBase64);
       const fileUri = await uploadPdf(pdfBytes);
       // 업로드된 파일은 48시간 뒤 자동 만료되므로 별도 삭제는 하지 않는다.
-      const result = await callGemini(fileUri);
-      return jsonResponse(result);
+      const script = await callGemini(fileUri);
+      const scenesWithAudio = await attachNarration(script.scenes, ctx.supabaseAdmin);
+      return jsonResponse({ title: script.title, scenes: scenesWithAudio });
     } catch (err) {
       if (err instanceof Response) return err;
       return jsonResponse(
@@ -397,7 +553,7 @@ export default {
 /* To invoke locally:
 
   1. Run `supabase start` (see: https://supabase.com/docs/reference/cli/supabase-start)
-  2. Set the GEMINI_API_KEY secret (see: https://supabase.com/docs/guides/functions/secrets)
+  2. Set the GEMINI_API_KEY / TYPECAST_API_KEY secrets (see: https://supabase.com/docs/guides/functions/secrets)
   3. Make an HTTP request:
 
   curl -i --location --request POST 'http://127.0.0.1:54321/functions/v1/summarize-script' \
