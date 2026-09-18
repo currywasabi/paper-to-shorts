@@ -1,0 +1,90 @@
+.app {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 32px 16px;
+  max-width: 900px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.dropzone {
+  width: 100%;
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  padding: 48px 24px;
+  text-align: center;
+  cursor: pointer;
+  background: none;
+  font: inherit;
+  color: var(--text);
+}
+
+.dropzone:hover,
+.dropzone.dragging {
+  border-color: var(--accent);
+  background: rgba(107, 75, 255, 0.04);
+}
+
+.dropzone:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.error {
+  color: var(--error);
+  font-size: 14px;
+}
+
+.file-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.file-info button {
+  border: 1px solid var(--border);
+  background: none;
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.viewer {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.viewer canvas {
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.viewer-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.viewer-controls button {
+  border: 1px solid var(--border);
+  background: none;
+  border-radius: 6px;
+  padding: 4px 12px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.viewer-controls button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
