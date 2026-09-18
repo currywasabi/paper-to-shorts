@@ -12,13 +12,11 @@ function LoginPrompt() {
           <Play className="size-8 fill-white text-white" />
         </div>
       </div>
-
       <div className="flex flex-col gap-1.5">
         <h1 className="font-heading text-xl font-semibold tracking-tight text-foreground">
           로그인해서 쇼츠로 공부해요
         </h1>
       </div>
-
       <div className="w-full max-w-xs">
         <AuthButton />
       </div>
