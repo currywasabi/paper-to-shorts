@@ -22,11 +22,16 @@ import { layoutScenes, toFrames } from "./layout";
 
 export interface ShortsVideoProps {
   script: ShortScript;
+  // cut.page -> 미리 렌더링된 PDF 페이지 이미지(data URL). ScriptStudio가 재생 전에 한 번에
+  // 만들어서 넘겨준다 — 재생 중 즉석 렌더링은 나레이션 오디오 재생 시작과 경합해서 뺐다.
+  pageImages?: Record<number, string>;
 }
 
-/** 배경 — 지금은 실제 PDF 크롭 이미지 없이, 어느 페이지를 쓸지만 표시하는 자리표시자.
- * 화면을 꽉 채우지 않고 위(제목)와 아래(밈/여백)에 공간을 남긴다. */
-function CutView({ cut }: { cut: CutBlock }) {
+/** 배경 — pageImages에 해당 페이지가 있으면 실제 PDF 페이지를 보여준다(지금은 페이지 전체,
+ * 특정 영역만 크롭하는 건 다음 단계). 화면을 꽉 채우지 않고 위(제목)와 아래(밈/여백)에 공간을 남긴다. */
+function CutView({ cut, pageImages }: { cut: CutBlock; pageImages?: Record<number, string> }) {
+  const imageUrl = pageImages?.[cut.page];
+
   return (
     <AbsoluteFill
       style={{
@@ -47,15 +52,19 @@ function CutView({ cut }: { cut: CutBlock }) {
           overflow: "hidden",
         }}
       >
-        <div
-          style={{
-            color: "#7c8db5",
-            fontSize: 26,
-            fontFamily: "system-ui, sans-serif",
-          }}
-        >
-          cut: PDF p.{cut.page} (placeholder)
-        </div>
+        {imageUrl ? (
+          <Img src={imageUrl} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+        ) : (
+          <div
+            style={{
+              color: "#7c8db5",
+              fontSize: 26,
+              fontFamily: "system-ui, sans-serif",
+            }}
+          >
+            cut: PDF p.{cut.page} (placeholder)
+          </div>
+        )}
       </div>
     </AbsoluteFill>
   );
@@ -125,10 +134,10 @@ function SoundView({ sound }: { sound: SoundBlock }) {
 }
 
 /** 블록 하나를 type에 맞는 뷰로 연결한다. */
-function BlockView({ block }: { block: Block }) {
+function BlockView({ block, pageImages }: { block: Block; pageImages?: Record<number, string> }) {
   switch (block.type) {
     case "cut":
-      return <CutView cut={block} />;
+      return <CutView cut={block} pageImages={pageImages} />;
     case "attachment":
       return <AttachmentView attachment={block} />;
     case "meme":
@@ -141,7 +150,7 @@ function BlockView({ block }: { block: Block }) {
   }
 }
 
-function SceneView({ scene }: { scene: Scene }) {
+function SceneView({ scene, pageImages }: { scene: Scene; pageImages?: Record<number, string> }) {
   const { fps } = useVideoConfig();
 
   return (
@@ -155,7 +164,7 @@ function SceneView({ scene }: { scene: Scene }) {
           from={toFrames(block.startOffset, fps)}
           durationInFrames={toFrames(block.duration, fps)}
         >
-          <BlockView block={block} />
+          <BlockView block={block} pageImages={pageImages} />
         </Sequence>
       ))}
 
@@ -178,7 +187,7 @@ function SceneView({ scene }: { scene: Scene }) {
 }
 
 /** 장면 배열 + 고정 제목으로 구성된 최소 구성의 Remotion 컴포지션. */
-export function ShortsVideo({ script }: ShortsVideoProps) {
+export function ShortsVideo({ script, pageImages }: ShortsVideoProps) {
   const { fps } = useVideoConfig();
   const positioned = layoutScenes(script.scenes, fps);
 
@@ -186,7 +195,7 @@ export function ShortsVideo({ script }: ShortsVideoProps) {
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
       {positioned.map(({ scene, from, durationInFrames }, i) => (
         <Sequence key={i} from={from} durationInFrames={durationInFrames}>
-          <SceneView scene={scene} />
+          <SceneView scene={scene} pageImages={pageImages} />
         </Sequence>
       ))}
 
@@ -202,6 +211,9 @@ export function ShortsVideo({ script }: ShortsVideoProps) {
           fontWeight: 1000,
           color: "#fff",
           letterSpacing: "-0.02em",
+          // 기본값(CJK는 글자 단위로도 줄바꿈)이면 한글 단어 중간이 잘린다 — 공백(단어) 단위로만 끊는다.
+          wordBreak: "keep-all",
+          overflowWrap: "break-word",
           WebkitTextStroke: "2px rgba(0,0,0,0.35)",
           textShadow: "0 4px 18px rgba(0,0,0,0.75)",
           fontFamily: "system-ui, sans-serif",

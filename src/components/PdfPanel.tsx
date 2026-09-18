@@ -22,10 +22,12 @@ const SUMMARIZE_STAGES = [
 export interface PdfPanelProps {
   // 대본 생성이 끝나면 원본 JSON을 그대로 넘긴다 — ScriptStudio가 이걸로 에디터/프리뷰를 채운다.
   onScriptGenerated?: (script: ShortScript) => void;
+  // pdfjs로 로드된 문서. ShortsVideo의 CutView가 실제 페이지를 렌더링하는 데 쓴다.
+  onPdfLoaded?: (pdf: PDFDocumentProxy | null) => void;
 }
 
 /** PDF 업로드 → 뷰어 → 쇼츠 대본 생성. 기존 기능 그대로, 위치만 사이드바로 이동. */
-function PdfPanel({ onScriptGenerated }: PdfPanelProps) {
+function PdfPanel({ onScriptGenerated, onPdfLoaded }: PdfPanelProps) {
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -39,6 +41,11 @@ function PdfPanel({ onScriptGenerated }: PdfPanelProps) {
 
   const inputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // pdf가 바뀔 때마다(로드/리셋) 상위로 그대로 전파한다.
+  useEffect(() => {
+    onPdfLoaded?.(pdf);
+  }, [pdf, onPdfLoaded]);
 
   async function handleFile(next: File | null) {
     if (!next) return;

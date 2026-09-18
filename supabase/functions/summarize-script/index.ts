@@ -22,6 +22,11 @@ const NARRATION_BUCKET = "narration-audio";
 // 씬이 끝난 뒤 다음 씬으로 넘어가기 전 숨 돌릴 틈. 트리밍으로 앞뒤를 깎는 대신 여유를 더 준다.
 const NARRATION_GAP_SECONDS = 0.1;
 
+// 헤더/바이트 계산을 실제 길이에 맞게 고쳤는데도 재생 끝부분이 잘리는 문제가 있어서 추가한 매직
+// 넘버. 근본 원인(Typecast 자체 합성 문제인지, 브라우저 오디오 버퍼링 지연인지) 확정 전 임시 버퍼.
+// 필요하면 이 값만 조절하면 된다.
+const NARRATION_SAFETY_PADDING_SECONDS = 0.5;
+
 // 클라이언트가 20MB 원본 업로드를 막고 있어(base64로 약 27MB), 여유를 두고 40MB로 방어.
 const MAX_BASE64_LENGTH = 40 * 1024 * 1024;
 
@@ -265,6 +270,8 @@ async function uploadPdf(pdfBytes: Uint8Array): Promise<string> {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ file: { display_name: "paper.pdf" } }),
+    // 응답이 안 와도 함수가 무한정 매달리지 않도록 방어. 정상 동작 시간엔 절대 안 걸리는 여유값.
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!startRes.ok) {
@@ -282,6 +289,7 @@ async function uploadPdf(pdfBytes: Uint8Array): Promise<string> {
       "X-Goog-Upload-Command": "upload, finalize",
     },
     body: pdfBytes,
+    signal: AbortSignal.timeout(60_000),
   });
 
   if (!uploadRes.ok) {
@@ -315,6 +323,9 @@ async function callGemini(fileUri: string): Promise<SummarizeResult> {
           responseSchema: RESPONSE_SCHEMA,
         },
       }),
+      // 평소 20초 안팎(코드 상단 주석 참고)이니 90초면 정상 동작엔 전혀 안 걸리고, 멈춰버린
+      // 요청만 잘라낸다.
+      signal: AbortSignal.timeout(90_000),
     },
   );
 
@@ -382,7 +393,15 @@ function getWavDurationSeconds(bytes: Uint8Array): number {
       // 헤더에 적힌 chunkSize를 믿지 않는다 — 스트리밍으로 합성하는 TTS 엔진은 완료 전 추정치로
       // 헤더를 먼저 써두고 끝난 뒤 재기록하지 않는 경우가 있어서, 실제보다 작게 적힐 수 있다.
       // data는 보통 파일의 마지막 청크이므로 남은 바이트 전부를 오디오로 취급해 실제 길이를 구한다.
-      dataSize = bytes.length - bodyStart;
+      const actualRemaining = bytes.length - bodyStart;
+      if (chunkSize !== actualRemaining) {
+        // 헤더 거짓말이 여전히 있는지, 아니면 Typecast가 보내는 바이트 자체가 짧은 건지 다음
+        // 테스트에서 로그로 구분하기 위한 기록(추가 API 호출 없이 확인하려는 용도).
+        console.warn(
+          `[typecast] WAV data 청크 헤더 크기(${chunkSize}B)와 실제 수신 바이트(${actualRemaining}B)가 다릅니다.`,
+        );
+      }
+      dataSize = actualRemaining;
       break;
     } else {
       offset = bodyStart + chunkSize + (chunkSize % 2);
@@ -397,8 +416,20 @@ function getWavDurationSeconds(bytes: Uint8Array): number {
   return dataSize / byteRate;
 }
 
+// Typecast 문서상 text는 1~2000자. 넘기면 Typecast가 400을 주긴 하지만, 원인이 뭔지 바로
+// 드러나도록 우리 쪽에서 먼저 걸러서 명확한 에러로 실패시킨다.
+const TYPECAST_TEXT_MAX_LENGTH = 2000;
+
 /** 씬 나레이션 하나를 Typecast로 합성한다. 429(동시성/rate limit)는 한 번만 재시도한다. */
 async function synthesizeSceneAudio(text: string, attempt = 0): Promise<Uint8Array> {
+  if (text.length === 0 || text.length > TYPECAST_TEXT_MAX_LENGTH) {
+    throw upstreamError(
+      "typecast",
+      `나레이션 길이가 Typecast 제한(1~${TYPECAST_TEXT_MAX_LENGTH}자)을 벗어났습니다: ${text.length}자`,
+      400,
+    );
+  }
+
   const res = await fetch("https://api.typecast.ai/v1/text-to-speech", {
     method: "POST",
     headers: { "X-API-KEY": TYPECAST_API_KEY!, "Content-Type": "application/json" },
@@ -411,6 +442,7 @@ async function synthesizeSceneAudio(text: string, attempt = 0): Promise<Uint8Arr
       // 트리밍 대신 attachNarration에서 NARRATION_GAP_SECONDS만큼 뒤에 여유를 붙이는 쪽으로 바꿨다.
       output: { audio_format: "wav", remove_silence_ms: 0 },
     }),
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (res.status === 429 && attempt === 0) {
@@ -430,15 +462,23 @@ async function synthesizeSceneAudio(text: string, attempt = 0): Promise<Uint8Arr
   return new Uint8Array(await res.arrayBuffer());
 }
 
+// 엣지 함수 인스턴스는 요청 간에 warm하게 재사용되는 경우가 많다 — 한 번 만든 걸 확인했으면
+// 매 요청마다 getBucket을 또 부를 필요 없다(순수 지연시간 절약, 동작은 그대로).
+let narrationBucketReady = false;
+
 // deno-lint-ignore no-explicit-any
 async function ensureNarrationBucket(supabaseAdmin: any) {
-  const { data } = await supabaseAdmin.storage.getBucket(NARRATION_BUCKET);
-  if (data) return;
+  if (narrationBucketReady) return;
 
-  const { error } = await supabaseAdmin.storage.createBucket(NARRATION_BUCKET, { public: true });
-  if (error && !/already exists/i.test(error.message ?? "")) {
-    throw upstreamError("storage", `오디오 저장용 버킷 생성 실패: ${error.message}`);
+  const { data } = await supabaseAdmin.storage.getBucket(NARRATION_BUCKET);
+  if (!data) {
+    const { error } = await supabaseAdmin.storage.createBucket(NARRATION_BUCKET, { public: true });
+    if (error && !/already exists/i.test(error.message ?? "")) {
+      throw upstreamError("storage", `오디오 저장용 버킷 생성 실패: ${error.message}`);
+    }
   }
+
+  narrationBucketReady = true;
 }
 
 async function uploadNarrationAudio(
@@ -447,9 +487,12 @@ async function uploadNarrationAudio(
   path: string,
   bytes: Uint8Array,
 ): Promise<string> {
-  const { error } = await supabaseAdmin.storage
-    .from(NARRATION_BUCKET)
-    .upload(path, bytes, { contentType: "audio/wav", upsert: true });
+  const { error } = await supabaseAdmin.storage.from(NARRATION_BUCKET).upload(path, bytes, {
+    contentType: "audio/wav",
+    upsert: true,
+    // 경로가 요청마다 유니크(requestId/씬 인덱스)해서 내용이 바뀔 일이 없다 — 오래 캐시해도 안전.
+    cacheControl: "31536000",
+  });
   if (error) throw upstreamError("storage", `오디오 업로드 실패: ${error.message}`);
 
   const { data } = supabaseAdmin.storage.from(NARRATION_BUCKET).getPublicUrl(path);
@@ -461,13 +504,23 @@ function minBlockDuration(block: Block): number {
   return block.type === "sound" ? 0.5 : 0.1;
 }
 
-/** scene.duration이 TTS 실측값으로 바뀌면서 넘치게 된 block은 잘라내거나 통째로 버린다. */
-function reconcileBlocks(blocks: Block[], sceneDuration: number): Block[] {
+// Gemini가 원래 준 duration 끝(또는 그 근처)까지 닿아 있던 block은 "씬 끝까지 채우려는 의도"로
+// 보고, 늘어난 sceneDuration만큼 같이 늘린다. 부동소수점 오차를 감안해 살짝 여유를 둔다.
+const SCENE_END_EPSILON_SECONDS = 0.05;
+
+/** scene.duration이 TTS 실측값(+갭+안전 버퍼)으로 바뀌면서 block 길이를 다시 맞춘다.
+ * - 원래 씬 끝까지 이어지던 block(주로 배경 cut)은 새 sceneDuration 끝까지 늘린다.
+ * - 그 외(중간에 잠깐 등장하는 block)는 넘치는 만큼만 잘라내거나, 아예 못 들어가면 버린다. */
+function reconcileBlocks(blocks: Block[], originalDuration: number, sceneDuration: number): Block[] {
   const kept: Block[] = [];
   for (const block of blocks) {
     const available = sceneDuration - block.startOffset;
     if (available < minBlockDuration(block)) continue;
-    kept.push({ ...block, duration: Math.min(block.duration, available) });
+
+    const reachedOriginalEnd = block.startOffset + block.duration >= originalDuration - SCENE_END_EPSILON_SECONDS;
+    const duration = reachedOriginalEnd ? available : Math.min(block.duration, available);
+
+    kept.push({ ...block, duration });
   }
   return kept;
 }
@@ -484,16 +537,16 @@ async function attachNarration(scenes: Scene[], supabaseAdmin: any): Promise<Sce
     scenes.map((scene, i) =>
       limit(async () => {
         const audioBytes = await synthesizeSceneAudio(scene.text);
-        // 오디오 자체는 트리밍하지 않은 실제 길이. scene.duration에는 다음 씬으로 넘어가기
-        // 전 숨 돌릴 틈(NARRATION_GAP_SECONDS)을 더해서, 음성이 씬 끝에 딱 붙어 끊기지 않게 한다.
+        // 오디오 자체는 트리밍하지 않은 실제 길이. scene.duration에는 다음 씬으로 넘어가기 전
+        // 숨 돌릴 틈(NARRATION_GAP_SECONDS) + 끝부분 잘림 방지용 안전 버퍼를 더한다.
         const audioDurationSeconds = getWavDurationSeconds(audioBytes);
-        const sceneDuration = audioDurationSeconds + NARRATION_GAP_SECONDS;
+        const sceneDuration = audioDurationSeconds + NARRATION_GAP_SECONDS + NARRATION_SAFETY_PADDING_SECONDS;
         const audioUrl = await uploadNarrationAudio(supabaseAdmin, `${requestId}/${i}.wav`, audioBytes);
 
         return {
           ...scene,
           duration: sceneDuration,
-          blocks: reconcileBlocks(scene.blocks, sceneDuration),
+          blocks: reconcileBlocks(scene.blocks, scene.duration, sceneDuration),
           audioUrl,
         };
       })

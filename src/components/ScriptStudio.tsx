@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Player } from '@remotion/player';
+import type { PDFDocumentProxy } from 'pdfjs-dist';
 
 import { ShortsVideo } from '../remotion/ShortsVideo';
 import { totalDurationInFrames } from '../remotion/layout';
@@ -44,14 +45,20 @@ const DUMMY_SCRIPT: ShortScript = {
 export interface ScriptStudioProps {
   // PdfPanel에서 Gemini로 생성한 대본. 들어오면 아래 JSON 에디터/프리뷰에 그대로 반영된다.
   externalScript?: ShortScript | null;
+  // 업로드된 PDF 문서. cut 블록이 참조하는 페이지를 미리 렌더링해서 캐싱하는 데 쓴다.
+  pdf?: PDFDocumentProxy | null;
 }
 
 /** JSON을 손으로 채워 Remotion 렌더링을 검증하는 화면. externalScript가 오면 그걸로 덮어쓴다. */
-function ScriptStudio({ externalScript }: ScriptStudioProps) {
+function ScriptStudio({ externalScript, pdf }: ScriptStudioProps) {
   const [jsonText, setJsonText] = useState(() => JSON.stringify(DUMMY_SCRIPT, null, 2));
   const [script, setScript] = useState<ShortScript>(DUMMY_SCRIPT);
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
+  // page 번호 -> 렌더링된 data URL. 재생 중(Sequence 마운트 시점)에 즉석으로 pdfjs를 돌리면
+  // 그 렌더링이 메인 스레드를 잠깐 점유해서 나레이션 오디오 재생 시작과 경합 — 그러면 오디오 싱크가
+  // 따라잡으려고 맨 앞부분을 건너뛰는 문제가 있었다. 그래서 재생 전에 미리 다 그려서 캐싱해둔다.
+  const [pageImages, setPageImages] = useState<Record<number, string>>({});
   // externalScript가 바뀐 걸 렌더링 중에 감지해서 그 즉시 state를 맞춘다(리액트 공식 권장 패턴).
   // useEffect로 하면 한 프레임 구 대본으로 먼저 그렸다가 다시 렌더링하는 낭비가 생긴다.
   const [syncedExternalScript, setSyncedExternalScript] = useState(externalScript);
@@ -63,6 +70,50 @@ function ScriptStudio({ externalScript }: ScriptStudioProps) {
     setJsonError(null);
     setVersion((v) => v + 1);
   }
+
+  // pdf 또는 script(가 참조하는 cut 페이지)가 바뀌면 필요한 페이지를 전부 미리 렌더링한다.
+  // pdf가 없을 때는 아래 inputProps에서 그냥 빈 캐시를 쓰도록 유도만 하고, 여기서 state를
+  // 리셋하려고 effect를 쓰지는 않는다(렌더링 중에 바로 파생 가능한 값이라 불필요한 리렌더 방지).
+  useEffect(() => {
+    if (!pdf) return;
+
+    const pages = new Set<number>();
+    for (const scene of script.scenes) {
+      for (const block of scene.blocks) {
+        if (block.type === 'cut') pages.add(block.page);
+      }
+    }
+
+    let cancelled = false;
+
+    Promise.all(
+      Array.from(pages).map(async (pageNum): Promise<[number, string] | null> => {
+        try {
+          const page = await pdf.getPage(pageNum);
+          const viewport = page.getViewport({ scale: 2 });
+          const canvas = document.createElement('canvas');
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const context = canvas.getContext('2d');
+          if (!context) return null;
+
+          await page.render({ canvas, canvasContext: context, viewport }).promise;
+          return [pageNum, canvas.toDataURL('image/png')];
+        } catch {
+          // 페이지 번호가 실제 PDF 범위를 벗어나는 등 실패하면 그 페이지만 조용히 건너뛴다.
+          return null;
+        }
+      }),
+    ).then((entries) => {
+      if (cancelled) return;
+      const valid = entries.filter((e): e is [number, string] => e !== null);
+      setPageImages(Object.fromEntries(valid));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pdf, script]);
 
   function applyJson() {
     let parsed: unknown;
@@ -87,7 +138,10 @@ function ScriptStudio({ externalScript }: ScriptStudioProps) {
     setVersion((v) => v + 1);
   }
 
-  const inputProps = useMemo(() => ({ script }), [script]);
+  const inputProps = useMemo(
+    () => ({ script, pageImages: pdf ? pageImages : {} }),
+    [script, pageImages, pdf],
+  );
 
   return (
     <div className="studio">
