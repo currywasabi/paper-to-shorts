@@ -5,15 +5,20 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { MAX_FILE_SIZE, validatePdfFile } from '../lib/pdfFile';
 import { extractPdfContent, type Section } from '../lib/extractPdfContent';
 import { summarizeScript } from '../lib/summarizeScript';
-import type { Scene } from '../schema';
+import type { ShortScript } from '../schema';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
   import.meta.url,
 ).toString();
 
+export interface PdfPanelProps {
+  // 대본 생성이 끝나면 원본 JSON을 그대로 넘긴다 — ScriptStudio가 이걸로 에디터/프리뷰를 채운다.
+  onScriptGenerated?: (script: ShortScript) => void;
+}
+
 /** PDF 업로드 → 뷰어 → 텍스트 추출 → 쇼츠 대본 생성. 기존 기능 그대로, 위치만 사이드바로 이동. */
-function PdfPanel() {
+function PdfPanel({ onScriptGenerated }: PdfPanelProps) {
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -26,8 +31,7 @@ function PdfPanel() {
 
   const [summarizing, setSummarizing] = useState(false);
   const [summarizeError, setSummarizeError] = useState<string | null>(null);
-  const [title, setTitle] = useState<string | null>(null);
-  const [scenes, setScenes] = useState<Scene[] | null>(null);
+  const [generatedScript, setGeneratedScript] = useState<ShortScript | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -57,8 +61,7 @@ function PdfPanel() {
     setExtractError(null);
     setSections(null);
     setSummarizeError(null);
-    setTitle(null);
-    setScenes(null);
+    setGeneratedScript(null);
     if (inputRef.current) inputRef.current.value = '';
   }
 
@@ -69,7 +72,7 @@ function PdfPanel() {
     setExtractError(null);
     setSections(null);
     setSummarizeError(null);
-    setScenes(null);
+    setGeneratedScript(null);
 
     try {
       const result = await extractPdfContent(pdf);
@@ -86,13 +89,12 @@ function PdfPanel() {
 
     setSummarizing(true);
     setSummarizeError(null);
-    setTitle(null);
-    setScenes(null);
+    setGeneratedScript(null);
 
     try {
       const result = await summarizeScript(file);
-      setTitle(result.title);
-      setScenes(result.scenes);
+      setGeneratedScript(result);
+      onScriptGenerated?.(result);
     } catch (err) {
       setSummarizeError(err instanceof Error ? err.message : '대본 생성 중 오류가 발생했습니다.');
     } finally {
@@ -246,23 +248,12 @@ function PdfPanel() {
 
           {summarizeError && <p className="error">{summarizeError}</p>}
 
-          {scenes && (
-            <div className="extract-results">
-              <h2>
-                {title} ({scenes.reduce((sum, s) => sum + s.duration, 0).toFixed(1)}초)
-              </h2>
-              {scenes.map((s, i) => (
-                <div key={i} className="scene">
-                  <span className="scene-duration">{s.duration}초</span>
-                  <div>
-                    <p>{s.text}</p>
-                    {s.blocks.length > 0 && (
-                      <p className="scene-caption">{s.blocks.map((b) => b.type).join(', ')}</p>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+          {generatedScript && (
+            <p className="scene-duration">
+              ✅ "{generatedScript.title}" ·{' '}
+              {generatedScript.scenes.reduce((sum, s) => sum + s.duration, 0).toFixed(1)}초 ·{' '}
+              {generatedScript.scenes.length}개 장면 — 오른쪽 대본 화면에 반영됨
+            </p>
           )}
         </div>
       )}

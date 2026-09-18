@@ -41,12 +41,28 @@ const DUMMY_SCRIPT: ShortScript = {
   ],
 };
 
-/** JSON을 손으로 채워 Remotion 렌더링만 먼저 검증하기 위한 임시 화면. AI 연동은 아직 안 함. */
-function ScriptStudio() {
+export interface ScriptStudioProps {
+  // PdfPanel에서 Gemini로 생성한 대본. 들어오면 아래 JSON 에디터/프리뷰에 그대로 반영된다.
+  externalScript?: ShortScript | null;
+}
+
+/** JSON을 손으로 채워 Remotion 렌더링을 검증하는 화면. externalScript가 오면 그걸로 덮어쓴다. */
+function ScriptStudio({ externalScript }: ScriptStudioProps) {
   const [jsonText, setJsonText] = useState(() => JSON.stringify(DUMMY_SCRIPT, null, 2));
   const [script, setScript] = useState<ShortScript>(DUMMY_SCRIPT);
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
+  // externalScript가 바뀐 걸 렌더링 중에 감지해서 그 즉시 state를 맞춘다(리액트 공식 권장 패턴).
+  // useEffect로 하면 한 프레임 구 대본으로 먼저 그렸다가 다시 렌더링하는 낭비가 생긴다.
+  const [syncedExternalScript, setSyncedExternalScript] = useState(externalScript);
+
+  if (externalScript && externalScript !== syncedExternalScript) {
+    setSyncedExternalScript(externalScript);
+    setJsonText(JSON.stringify(externalScript, null, 2));
+    setScript(externalScript);
+    setJsonError(null);
+    setVersion((v) => v + 1);
+  }
 
   function applyJson() {
     let parsed: unknown;
