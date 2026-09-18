@@ -31,9 +31,9 @@ const HEIGHT = 1920;
 // summarize-script는 한 요청 안에서 PDF 업로드 → Gemini 분석 → 씬별 TTS 합성을 순서대로 처리한다.
 // 서버가 중간 진행 상황을 스트리밍해주진 않으니, 각 단계가 보통 걸리는 시간을 기준으로 대략 흉내만 낸다.
 const SUMMARIZE_STAGES = [
-  { afterMs: 0, label: 'PDF를 Gemini에 업로드하는 중...' },
-  { afterMs: 3_000, label: 'Gemini가 대본을 작성하는 중... (20초 안팎)' },
-  { afterMs: 23_000, label: 'Typecast로 나레이션 음성 합성 중... (동시 2개씩 순차 처리)' },
+  { afterMs: 0, label: 'PDF를 Gemini에 업로드하는 중' },
+  { afterMs: 3_000, label: 'Gemini가 대본을 작성하는 중' },
+  { afterMs: 23_000, label: 'Google Cloud TTS로 나레이션 음성 합성하는 중' },
 ] as const;
 
 type Stage = 'idle' | 'summarizing' | 'ready' | 'saving';
@@ -171,6 +171,9 @@ function AddVideoModal({ open, onOpenChange, channels, contextChannelId, onSaved
         <DialogHeader>
           <DialogTitle>동영상 추가</DialogTitle>
           <DialogDescription>PDF를 업로드하면 쇼츠 대본과 나레이션을 자동으로 만듭니다.</DialogDescription>
+          <p className="text-xs text-muted-foreground">
+            글씨가 조밀한 파일이나 고난도 논문은 인식하지 못할 수 있습니다.
+          </p>
         </DialogHeader>
 
         {(stage === 'idle' || stage === 'summarizing') && (
@@ -190,8 +193,14 @@ function AddVideoModal({ open, onOpenChange, channels, contextChannelId, onSaved
               onDrop={onDrop}
             >
               {stage === 'summarizing' ? (
-                <span className="text-xs font-medium tracking-wide text-primary uppercase">
-                  {summarizeStage ?? '생성 중...'}
+                <span className="flex flex-col items-center gap-3">
+                  <span
+                    aria-hidden
+                    className="size-8 animate-spin rounded-full border-2 border-primary/20 border-t-primary"
+                  />
+                  <span className="text-xs font-medium tracking-wide text-primary uppercase">
+                    {summarizeStage ?? '생성하는 중'}
+                  </span>
                 </span>
               ) : (
                 <>
