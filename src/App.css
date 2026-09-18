@@ -1,3 +1,73 @@
+.app-shell {
+  flex: 1;
+  display: flex;
+  height: 100svh;
+}
+
+.sidebar {
+  width: 380px;
+  flex: none;
+  overflow-y: auto;
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border);
+}
+
+.main-panel {
+  flex: 1;
+  overflow: hidden;
+  padding: 24px;
+}
+
+.studio {
+  height: 100%;
+  display: flex;
+  gap: 24px;
+}
+
+.script-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.script-editor h2 {
+  font-size: 15px;
+  margin: 0;
+  color: var(--text-dim);
+}
+
+.script-editor textarea {
+  flex: 1;
+  background: var(--bg-sidebar);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  font: 13px/1.5 ui-monospace, Consolas, monospace;
+  resize: none;
+}
+
+.script-editor > button {
+  align-self: flex-start;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: none;
+  border-radius: 6px;
+  padding: 6px 16px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.video-preview {
+  flex: none;
+  width: 380px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .app {
   flex: 1;
   display: flex;
@@ -5,9 +75,7 @@
   align-items: center;
   gap: 16px;
   padding: 32px 16px;
-  max-width: 900px;
   width: 100%;
-  margin: 0 auto;
 }
 
 .dropzone {
@@ -25,7 +93,7 @@
 .dropzone:hover,
 .dropzone.dragging {
   border-color: var(--accent);
-  background: rgba(107, 75, 255, 0.04);
+  background: rgba(138, 123, 255, 0.08);
 }
 
 .dropzone:focus-visible {
@@ -139,4 +207,29 @@
 .extract-results p {
   white-space: pre-wrap;
   margin-top: 8px;
+}
+
+.scene {
+  display: flex;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+.scene-duration {
+  flex: none;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.scene p {
+  margin: 0;
+}
+
+.scene-caption {
+  font-weight: 700;
+  margin-bottom: 2px !important;
 }

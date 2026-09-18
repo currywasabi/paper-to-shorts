@@ -424,3 +424,14 @@ entrypoint = "./functions/extract-pdf-text/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/extract-pdf-text/*.html" ]
+
+[functions.summarize-script]
+enabled = true
+verify_jwt = false
+import_map = "./functions/summarize-script/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/summarize-script/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/summarize-script/*.html" ]

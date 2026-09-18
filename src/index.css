@@ -1,14 +1,16 @@
 :root {
-  --text: #2b2b2b;
-  --border: #e2e2e2;
-  --bg: #ffffff;
-  --accent: #6b4bff;
-  --error: #d1373f;
+  --text: #e8e8e6;
+  --text-dim: #9a9a95;
+  --border: #333335;
+  --bg: #212123;
+  --bg-sidebar: #181819;
+  --accent: #8a7bff;
+  --error: #ff6b6b;
 
   font: 16px/1.5 system-ui, 'Segoe UI', Roboto, sans-serif;
   color: var(--text);
   background: var(--bg);
-  color-scheme: light;
+  color-scheme: dark;
 }
 
 * {
