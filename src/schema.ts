@@ -23,6 +23,9 @@ export const MEME_IMAGE_NAMES = [
 export const cutBlockSchema = z.object({
   type: z.literal('cut'),
   page: z.number().int().min(1),
+  // 채널에 저장할 때만 채워진다 — Storage에 업로드된 페이지 이미지의 공개 URL.
+  // 저장 전 미리보기 단계에서는 없고, 그때는 pageImages(로컬 렌더링 캐시)로 대신한다.
+  imageUrl: z.string().optional(),
   ...timedElement,
 });
 

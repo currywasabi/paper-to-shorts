@@ -1,30 +1,79 @@
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Noto+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
 :root {
-  --text: #e8e8e6;
-  --text-dim: #9a9a95;
-  --border: #333335;
-  --bg: #212123;
-  --bg-sidebar: #181819;
-  --accent: #8a7bff;
-  --error: #ff6b6b;
+  --background: #ffffff;
+  --foreground: #0f0f0f;
+  --card: #ffffff;
+  --card-foreground: #0f0f0f;
+  --popover: #ffffff;
+  --popover-foreground: #0f0f0f;
+  --primary: #d10a1f;
+  --primary-foreground: #ffffff;
+  --secondary: #f3f3f3;
+  --secondary-foreground: #0f0f0f;
+  --muted: #f3f3f3;
+  --muted-foreground: #5f5f5f;
+  --accent: #f3f3f3;
+  --accent-foreground: #0f0f0f;
+  --destructive: #a90817;
+  --destructive-foreground: #ffffff;
+  --border: #e6e6e6;
+  --input: #dcdcdc;
+  --ring: #d10a1f;
+  --radius: 0.625rem;
 
-  font: 16px/1.5 system-ui, 'Segoe UI', Roboto, sans-serif;
-  color: var(--text);
-  background: var(--bg);
-  color-scheme: dark;
+  --font-sans: 'Noto Sans KR', system-ui, sans-serif;
+  --font-heading: 'Archivo', 'Noto Sans KR', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
 }
 
-* {
-  box-sizing: border-box;
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --font-sans: var(--font-sans);
+  --font-heading: var(--font-heading);
+  --font-mono: var(--font-mono);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
 }
 
-body {
-  margin: 0;
-  min-height: 100svh;
-  background: var(--bg);
-}
-
-#root {
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+    /* 전체 글씨 크기 1.3배 — rem 기반 유틸리티라 spacing 등도 비례해서 커진다. */
+    font-size: 130%;
+  }
 }
