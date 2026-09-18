@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import AddVideoModal from './AddVideoModal';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import VideoPlayerModal from './VideoPlayerModal';
 import type { Channel, VideoSummary } from '../lib/channels';
 
 export interface VideoGalleryProps {
@@ -12,19 +14,64 @@ export interface VideoGalleryProps {
   onSaved: () => void;
 }
 
+type SortOrder = 'newest' | 'oldest' | 'views';
+
+const SORT_LABEL: Record<SortOrder, string> = {
+  newest: '최신순',
+  oldest: '오래된순',
+  views: '조회수순',
+};
+
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+}
+
 /** 선택된 채널의 영상 보관함. 썸네일 카드들을 나열하고, 그 중 하나로 동영상 추가 카드를 끼워 넣는다. */
 function VideoGallery({ channels, selectedChannelId, videos, loading, error, onSaved }: VideoGalleryProps) {
   const [modalOpen, setModalOpen] = useState(false);
+  const [playingVideo, setPlayingVideo] = useState<VideoSummary | null>(null);
+  const [sortOrder, setSortOrder] = useState<SortOrder>('newest');
 
   const channelName = selectedChannelId
     ? (channels.find((c) => c.id === selectedChannelId)?.name ?? '채널')
     : '전체';
 
+  // videos는 최대 5개(계정당 저장 쿼터)라 서버 재조회 없이 클라이언트에서 정렬해도 충분하다.
+  const sortedVideos = useMemo(() => {
+    const copy = [...videos];
+    switch (sortOrder) {
+      case 'views':
+        return copy.sort((a, b) => b.viewCount - a.viewCount);
+      case 'oldest':
+        return copy.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      case 'newest':
+      default:
+        return copy.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    }
+  }, [videos, sortOrder]);
+
   return (
     <div className="flex h-full flex-col gap-4">
       <div className="flex items-center justify-between">
         <h1 className="font-heading text-lg font-semibold tracking-tight text-foreground">{channelName}</h1>
-        {!loading && <span className="font-mono text-sm text-muted-foreground">{videos.length}개 영상</span>}
+        <div className="flex items-center gap-3">
+          {!loading && (
+            <span className="text-sm font-medium text-muted-foreground">{videos.length}개 영상</span>
+          )}
+          <Select value={sortOrder} onValueChange={(value) => setSortOrder(value as SortOrder)}>
+            <SelectTrigger size="sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(Object.keys(SORT_LABEL) as SortOrder[]).map((key) => (
+                <SelectItem key={key} value={key}>
+                  {SORT_LABEL[key]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
@@ -39,9 +86,14 @@ function VideoGallery({ channels, selectedChannelId, videos, loading, error, onS
           <span className="text-base font-medium">동영상 추가</span>
         </button>
 
-        {videos.map((video) => (
-          <div key={video.id} className="flex flex-col gap-2">
-            <div className="aspect-[9/16] overflow-hidden rounded-2xl border border-border bg-secondary/70 backdrop-blur-sm">
+        {sortedVideos.map((video) => (
+          <button
+            type="button"
+            key={video.id}
+            onClick={() => setPlayingVideo(video)}
+            className="flex flex-col gap-2 text-left"
+          >
+            <div className="aspect-[9/16] overflow-hidden rounded-2xl border border-border bg-secondary/70 backdrop-blur-sm transition-transform hover:scale-[1.02]">
               {video.thumbnailUrl ? (
                 <img
                   src={video.thumbnailUrl}
@@ -55,7 +107,10 @@ function VideoGallery({ channels, selectedChannelId, videos, loading, error, onS
               )}
             </div>
             <p className="truncate text-base text-foreground">{video.title}</p>
-          </div>
+            <p className="text-xs text-muted-foreground">
+              조회 {video.viewCount.toLocaleString('ko-KR')} · {formatDate(video.createdAt)}
+            </p>
+          </button>
         ))}
       </div>
 
@@ -65,6 +120,13 @@ function VideoGallery({ channels, selectedChannelId, videos, loading, error, onS
         channels={channels}
         contextChannelId={selectedChannelId}
         onSaved={onSaved}
+      />
+
+      <VideoPlayerModal
+        video={playingVideo}
+        onOpenChange={(open) => {
+          if (!open) setPlayingVideo(null);
+        }}
       />
     </div>
   );

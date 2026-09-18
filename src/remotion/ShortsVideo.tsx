@@ -27,10 +27,11 @@ export interface ShortsVideoProps {
   pageImages?: Record<number, string>;
 }
 
-/** 배경 — pageImages에 해당 페이지가 있으면 실제 PDF 페이지를 보여준다(지금은 페이지 전체,
- * 특정 영역만 크롭하는 건 다음 단계). 화면을 꽉 채우지 않고 위(제목)와 아래(밈/여백)에 공간을 남긴다. */
+/** 배경 — pageImages에 해당 페이지가 있으면 그걸(저장 전 미리보기, 로컬 pdfjs 렌더링) 쓰고,
+ * 없으면 cut.imageUrl(채널에 저장된 뒤 Storage에 올라간 페이지 이미지)로 대체한다. 둘 다 없으면
+ * placeholder. 화면을 꽉 채우지 않고 위(제목)와 아래(밈/여백)에 공간을 남긴다. */
 function CutView({ cut, pageImages }: { cut: CutBlock; pageImages?: Record<number, string> }) {
-  const imageUrl = pageImages?.[cut.page];
+  const imageUrl = pageImages?.[cut.page] ?? cut.imageUrl;
 
   return (
     <AbsoluteFill

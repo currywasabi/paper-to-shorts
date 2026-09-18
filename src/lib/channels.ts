@@ -12,7 +12,10 @@ export interface VideoSummary {
   channelId: string;
   title: string;
   createdAt: string;
+  viewCount: number;
   thumbnailUrl: string | null;
+  // 재생 모달에서 바로 쓸 수 있게 전체 대본도 들고 있는다 — 목록 조회 때 이미 받아온 걸 재활용.
+  script: ShortScript;
 }
 
 /** 갤러리 카드 썸네일 = 대본에서 처음 등장하는 cut 블록의 저장된 페이지 이미지. */
@@ -77,7 +80,7 @@ export async function listVideos(channelId: string | null): Promise<VideoSummary
   const supabase = getSupabaseClient();
   let query = supabase
     .from('videos')
-    .select('id, channel_id, title, script, created_at')
+    .select('id, channel_id, title, script, created_at, view_count')
     .order('created_at', { ascending: false });
 
   if (channelId) query = query.eq('channel_id', channelId);
@@ -85,14 +88,29 @@ export async function listVideos(channelId: string | null): Promise<VideoSummary
   const { data, error } = await query;
   if (error) throw new Error(error.message);
 
-  return (data ?? []).map((row) => {
+  const videos: VideoSummary[] = [];
+  for (const row of data ?? []) {
     const parsed = shortScriptSchema.safeParse(row.script);
-    return {
+    if (!parsed.success) {
+      console.warn(`[videos] ${row.id}의 script가 스키마와 맞지 않아 건너뜀`, parsed.error.issues);
+      continue;
+    }
+    videos.push({
       id: row.id as string,
       channelId: row.channel_id as string,
       title: row.title as string,
       createdAt: row.created_at as string,
-      thumbnailUrl: parsed.success ? firstCutImageUrl(parsed.data) : null,
-    };
-  });
+      viewCount: row.view_count as number,
+      thumbnailUrl: firstCutImageUrl(parsed.data),
+      script: parsed.data,
+    });
+  }
+  return videos;
+}
+
+/** 재생 모달을 열 때 호출 — DB에서 원자적으로 +1 하므로 동시 재생에도 값이 씹히지 않는다. */
+export async function incrementVideoView(id: string): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase.rpc('increment_video_view', { video_id: id });
+  if (error) throw new Error(error.message);
 }
