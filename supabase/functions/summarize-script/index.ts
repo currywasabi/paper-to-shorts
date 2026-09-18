@@ -9,7 +9,20 @@ import { withSupabase } from "@supabase/server";
 const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-3.5-flash";
 const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
 
-// Typecast TTS. 목소리는 "필재" 고정 — https://typecast.ai/docs/llms.txt 참고.
+// TTS 켜고 끄는 스위치. Typecast 계정이 UNUSUAL_ACTIVITY_DETECTED(403)로 막혀서
+// Google Cloud TTS로 갈아탔다 — GOOGLE_TTS_SERVICE_ACCOUNT_JSON만 있으면 바로 동작한다.
+const TTS_ENABLED = true;
+
+// Google Cloud Text-to-Speech. 프로젝트에서 API 키 발급이 막혀 있어(조직 정책) 서비스 계정으로
+// 인증한다 — 서비스 계정 JSON 키 전체를 GOOGLE_TTS_SERVICE_ACCOUNT_JSON에 통째로 넣는다.
+// 서버 간 호출이라 오히려 API 키보다 이 방식이 정석이다.
+const GOOGLE_TTS_SERVICE_ACCOUNT_JSON = Deno.env.get("GOOGLE_TTS_SERVICE_ACCOUNT_JSON");
+const GOOGLE_TTS_VOICE = "ko-KR-Neural2-C";
+// Google 쪽은 Typecast처럼 빡빡한 동시성 제한은 없지만, 그래도 버스트로 때리지는 않는다.
+const GOOGLE_TTS_MAX_CONCURRENCY = 4;
+
+// --- 아래는 Typecast 연동 코드. 지금은 안 쓰지만(TTS_ENABLED 스위치가 Google 쪽을 탄다)
+// 구조는 그대로 남겨뒀다 — Typecast 계정이 복구되거나 다시 필요해지면 그대로 되살릴 수 있게. ---
 const TYPECAST_API_KEY = Deno.env.get("TYPECAST_API_KEY");
 const TYPECAST_MODEL = "ssfm-v30";
 const TYPECAST_VOICE_ID = "tc_68257f68bc6e3c161ab5078d";
@@ -240,8 +253,8 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
-// 호출한 쪽(Gemini/Typecast/Storage) 이 뭔지 클라이언트가 구분할 수 있도록 매번 source를 붙여서 던진다.
-type UpstreamSource = "gemini" | "typecast" | "storage";
+// 호출한 쪽(Gemini/TTS/Storage) 이 뭔지 클라이언트가 구분할 수 있도록 매번 source를 붙여서 던진다.
+type UpstreamSource = "gemini" | "tts" | "typecast" | "storage";
 
 function upstreamError(source: UpstreamSource, message: string, status = 502): Response {
   return new Response(JSON.stringify({ error: message, source }), {
@@ -366,10 +379,11 @@ function createLimiter(concurrency: number) {
   };
 }
 
-/** WAV(RIFF) 헤더를 직접 파싱해서 길이를 구한다 — Typecast 응답에 duration 필드가 없다. */
+/** WAV(RIFF) 헤더를 직접 파싱해서 길이를 구한다 — TTS 응답에 duration 필드가 없다.
+ * Typecast/Google TTS 둘 다 WAV로 받기 때문에 provider 상관없이 공용으로 쓴다. */
 function getWavDurationSeconds(bytes: Uint8Array): number {
   if (bytes.length < 12) {
-    throw upstreamError("typecast", "받은 오디오가 올바른 WAV 파일이 아닙니다.");
+    throw upstreamError("tts", "받은 오디오가 올바른 WAV 파일이 아닙니다.");
   }
 
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -409,12 +423,141 @@ function getWavDurationSeconds(bytes: Uint8Array): number {
   }
 
   if (!sampleRate || !channels || !bitsPerSample || !dataSize) {
-    throw upstreamError("typecast", "WAV 헤더에서 길이 정보를 읽지 못했습니다.");
+    throw upstreamError("tts", "WAV 헤더에서 길이 정보를 읽지 못했습니다.");
   }
 
   const byteRate = sampleRate * channels * (bitsPerSample / 8);
   return dataSize / byteRate;
 }
+
+interface GoogleServiceAccount {
+  client_email: string;
+  private_key: string;
+  token_uri: string;
+}
+
+function base64UrlEncode(bytes: Uint8Array): string {
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function pemPrivateKeyToBytes(pem: string): ArrayBuffer {
+  const base64 = pem.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\s+/g, "");
+  return base64ToBytes(base64).buffer;
+}
+
+// 엣지 함수 인스턴스가 warm하게 재사용되는 동안은 토큰/키를 다시 만들지 않는다 — 씬마다,
+// 요청마다 서명/토큰교환을 반복하면 느려지고 Google 쪽 토큰 엔드포인트도 불필요하게 때리게 된다.
+let cachedGoogleKey: CryptoKey | null = null;
+let cachedGoogleAccount: GoogleServiceAccount | null = null;
+let cachedGoogleToken: { accessToken: string; expiresAt: number } | null = null;
+
+/** 서비스 계정 JSON으로 직접 JWT를 서명해 Google OAuth 액세스 토큰을 받아온다(2-legged OAuth,
+ * 별도 라이브러리 없이 Web Crypto만으로). 토큰은 만료 1분 전까지 캐시해서 재사용한다. */
+async function getGoogleAccessToken(): Promise<string> {
+  if (!GOOGLE_TTS_SERVICE_ACCOUNT_JSON) {
+    throw upstreamError("tts", "GOOGLE_TTS_SERVICE_ACCOUNT_JSON이 설정되지 않았습니다.", 500);
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  if (cachedGoogleToken && cachedGoogleToken.expiresAt > now + 60) {
+    return cachedGoogleToken.accessToken;
+  }
+
+  cachedGoogleAccount ??= JSON.parse(GOOGLE_TTS_SERVICE_ACCOUNT_JSON) as GoogleServiceAccount;
+  const account = cachedGoogleAccount;
+
+  cachedGoogleKey ??= await crypto.subtle.importKey(
+    "pkcs8",
+    pemPrivateKeyToBytes(account.private_key),
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+
+  const header = base64UrlEncode(new TextEncoder().encode(JSON.stringify({ alg: "RS256", typ: "JWT" })));
+  const claims = base64UrlEncode(
+    new TextEncoder().encode(
+      JSON.stringify({
+        iss: account.client_email,
+        scope: "https://www.googleapis.com/auth/cloud-platform",
+        aud: account.token_uri,
+        iat: now,
+        exp: now + 3600,
+      }),
+    ),
+  );
+  const signingInput = `${header}.${claims}`;
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    cachedGoogleKey,
+    new TextEncoder().encode(signingInput),
+  );
+  const jwt = `${signingInput}.${base64UrlEncode(new Uint8Array(signature))}`;
+
+  const tokenRes = await fetch(account.token_uri, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion: jwt,
+    }),
+  });
+
+  if (!tokenRes.ok) {
+    const detail = await tokenRes.text();
+    throw upstreamError("tts", `Google 액세스 토큰 발급 실패(${tokenRes.status}): ${detail}`, 502);
+  }
+
+  const tokenData = await tokenRes.json();
+  cachedGoogleToken = {
+    accessToken: tokenData.access_token,
+    expiresAt: now + (tokenData.expires_in ?? 3600),
+  };
+  return cachedGoogleToken.accessToken;
+}
+
+// Google Cloud TTS의 text:synthesize 엔드포인트는 요청 하나에 5000byte까지 받는다.
+const GOOGLE_TTS_TEXT_MAX_LENGTH = 5000;
+
+/** 씬 나레이션 하나를 Google Cloud TTS로 합성한다. LINEAR16으로 요청하면 응답이 WAV
+ * 컨테이너(RIFF 헤더 포함)로 오기 때문에 getWavDurationSeconds를 그대로 재사용할 수 있다. */
+async function synthesizeSceneAudioGoogle(text: string): Promise<Uint8Array> {
+  if (text.length === 0 || text.length > GOOGLE_TTS_TEXT_MAX_LENGTH) {
+    throw upstreamError(
+      "tts",
+      `나레이션 길이가 Google TTS 제한(1~${GOOGLE_TTS_TEXT_MAX_LENGTH}자)을 벗어났습니다: ${text.length}자`,
+      400,
+    );
+  }
+
+  const accessToken = await getGoogleAccessToken();
+
+  const res = await fetch("https://texttospeech.googleapis.com/v1/text:synthesize", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      input: { text },
+      voice: { languageCode: "ko-KR", name: GOOGLE_TTS_VOICE },
+      audioConfig: { audioEncoding: "LINEAR16", sampleRateHertz: 24000 },
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+
+  if (!res.ok) {
+    const detail = await res.text();
+    throw upstreamError("tts", `Google TTS 호출 실패(${res.status}): ${detail}`, res.status === 429 ? 429 : 502);
+  }
+
+  const { audioContent } = await res.json();
+  if (typeof audioContent !== "string") {
+    throw upstreamError("tts", "Google TTS 응답에 audioContent가 없습니다.");
+  }
+  return base64ToBytes(audioContent);
+}
+
+// --- 아래는 Typecast 연동 코드(현재 미사용, TTS_ENABLED는 위 Google 함수를 탄다). 구조만 보존. ---
 
 // Typecast 문서상 text는 1~2000자. 넘기면 Typecast가 400을 주긴 하지만, 원인이 뭔지 바로
 // 드러나도록 우리 쪽에서 먼저 걸러서 명확한 에러로 실패시킨다.
@@ -525,18 +668,22 @@ function reconcileBlocks(blocks: Block[], originalDuration: number, sceneDuratio
   return kept;
 }
 
-/** Gemini가 만든 scene들에 실제 TTS 오디오를 입히고, duration/blocks를 그 길이에 맞게 고정한다. */
+/** Gemini가 만든 scene들에 실제 TTS 오디오를 입히고, duration/blocks를 그 길이에 맞게 고정한다.
+ * TTS_ENABLED가 꺼져 있으면(현재 Typecast 계정 막힘) 아무것도 하지 않고 Gemini의 추정 duration을
+ * 그대로 쓴다 — scene.audioUrl 없이도 ShortsVideo/CutView는 정상 렌더링된다(나레이션만 없음). */
 // deno-lint-ignore no-explicit-any
 async function attachNarration(scenes: Scene[], supabaseAdmin: any): Promise<Scene[]> {
+  if (!TTS_ENABLED) return scenes;
+
   await ensureNarrationBucket(supabaseAdmin);
 
   const requestId = crypto.randomUUID();
-  const limit = createLimiter(TYPECAST_MAX_CONCURRENCY);
+  const limit = createLimiter(GOOGLE_TTS_MAX_CONCURRENCY);
 
   return Promise.all(
     scenes.map((scene, i) =>
       limit(async () => {
-        const audioBytes = await synthesizeSceneAudio(scene.text);
+        const audioBytes = await synthesizeSceneAudioGoogle(scene.text);
         // 오디오 자체는 트리밍하지 않은 실제 길이. scene.duration에는 다음 씬으로 넘어가기 전
         // 숨 돌릴 틈(NARRATION_GAP_SECONDS) + 끝부분 잘림 방지용 안전 버퍼를 더한다.
         const audioDurationSeconds = getWavDurationSeconds(audioBytes);
@@ -567,8 +714,8 @@ export default {
     if (!GEMINI_API_KEY) {
       return jsonResponse({ error: "GEMINI_API_KEY가 설정되지 않았습니다." }, 500);
     }
-    if (!TYPECAST_API_KEY) {
-      return jsonResponse({ error: "TYPECAST_API_KEY가 설정되지 않았습니다." }, 500);
+    if (TTS_ENABLED && !GOOGLE_TTS_SERVICE_ACCOUNT_JSON) {
+      return jsonResponse({ error: "GOOGLE_TTS_SERVICE_ACCOUNT_JSON이 설정되지 않았습니다." }, 500);
     }
 
     let body: SummarizeRequestBody;
@@ -606,7 +753,7 @@ export default {
 /* To invoke locally:
 
   1. Run `supabase start` (see: https://supabase.com/docs/reference/cli/supabase-start)
-  2. Set the GEMINI_API_KEY / TYPECAST_API_KEY secrets (see: https://supabase.com/docs/guides/functions/secrets)
+  2. Set the GEMINI_API_KEY / GOOGLE_TTS_SERVICE_ACCOUNT_JSON secrets (see: https://supabase.com/docs/guides/functions/secrets)
   3. Make an HTTP request:
 
   curl -i --location --request POST 'http://127.0.0.1:54321/functions/v1/summarize-script' \

@@ -29,11 +29,11 @@ function VideoGallery({ channels, selectedChannelId, videos, loading, error, onS
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-6 overflow-y-auto pb-2">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(232px,1fr))] gap-6 overflow-y-auto pb-2">
         <button
           type="button"
           onClick={() => setModalOpen(true)}
-          className="flex aspect-[9/16] flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-border text-muted-foreground transition-colors hover:border-primary hover:bg-primary/5 hover:text-primary"
+          className="flex aspect-[9/16] flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-border bg-secondary/20 text-muted-foreground backdrop-blur-sm transition-colors hover:border-primary hover:bg-primary/5 hover:text-primary"
         >
           <span className="text-4xl leading-none">+</span>
           <span className="text-base font-medium">동영상 추가</span>
@@ -41,7 +41,7 @@ function VideoGallery({ channels, selectedChannelId, videos, loading, error, onS
 
         {videos.map((video) => (
           <div key={video.id} className="flex flex-col gap-2">
-            <div className="aspect-[9/16] overflow-hidden rounded-2xl border border-border bg-secondary">
+            <div className="aspect-[9/16] overflow-hidden rounded-2xl border border-border bg-secondary/70 backdrop-blur-sm">
               {video.thumbnailUrl ? (
                 <img
                   src={video.thumbnailUrl}

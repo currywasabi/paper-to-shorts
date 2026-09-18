@@ -217,7 +217,7 @@ function AddVideoModal({ open, onOpenChange, channels, contextChannelId, onSaved
           <div className="flex flex-col gap-4">
             <p className="font-heading text-sm font-semibold text-foreground">{script.title}</p>
 
-            <div className="flex justify-center rounded-2xl border border-border bg-card p-3 shadow-sm">
+            <div className="flex justify-center rounded-2xl border border-border bg-card/70 p-3 shadow-sm backdrop-blur-md">
               <Player
                 component={ShortsVideo}
                 inputProps={inputProps}

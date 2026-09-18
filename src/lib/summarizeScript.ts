@@ -10,6 +10,7 @@ const REQUEST_TIMEOUT_MS = 240_000;
 // 서버(supabase/functions/summarize-script/index.ts)가 붙여 보내는 source 태그를 사람이 읽을 라벨로.
 const UPSTREAM_SOURCE_LABEL: Record<string, string> = {
   gemini: 'Gemini',
+  tts: 'Google TTS',
   typecast: 'Typecast',
   storage: 'Storage',
 };

@@ -59,6 +59,19 @@ export async function createChannel(name: string): Promise<Channel> {
   return { id: data.id as string, name: data.name as string, createdAt: data.created_at as string };
 }
 
+export async function renameChannel(id: string, name: string): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase.from('channels').update({ name }).eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+/** videos가 channel_id에 on delete cascade로 걸려 있어 해당 채널의 영상도 함께 삭제된다. */
+export async function deleteChannel(id: string): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase.from('channels').delete().eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
 /** channelId가 null이면 "전체" — 로그인한 사용자의 모든 채널을 합친 영상 목록. */
 export async function listVideos(channelId: string | null): Promise<VideoSummary[]> {
   const supabase = getSupabaseClient();
