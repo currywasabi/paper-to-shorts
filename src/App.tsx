@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 
 import './App.css';
+import AuthButton from './components/AuthButton';
 import PdfPanel from './components/PdfPanel';
 import ScriptStudio from './components/ScriptStudio';
 import type { ShortScript } from './schema';
@@ -13,13 +14,20 @@ function App() {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <PdfPanel onScriptGenerated={setGeneratedScript} onPdfLoaded={setPdf} />
-      </aside>
-      <main className="main-panel">
-        <ScriptStudio externalScript={generatedScript} pdf={pdf} />
-      </main>
+    <div className="app-root">
+      {/* 채널 사이드바는 다음 단계. 지금은 로그인 상태만 최소한으로 보여준다. */}
+      <header className="topbar">
+        <AuthButton />
+      </header>
+
+      <div className="app-shell">
+        <aside className="sidebar">
+          <PdfPanel onScriptGenerated={setGeneratedScript} onPdfLoaded={setPdf} />
+        </aside>
+        <main className="main-panel">
+          <ScriptStudio externalScript={generatedScript} pdf={pdf} />
+        </main>
+      </div>
     </div>
   );
 }
