@@ -5,7 +5,7 @@ import AuthButton from './AuthButton';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
-import type { Channel } from '../lib/channels';
+import { MAX_VIDEOS_PER_USER, type Channel } from '../lib/channels';
 
 export interface ChannelSidebarProps {
   channels: Channel[];
@@ -15,6 +15,8 @@ export interface ChannelSidebarProps {
   onCreate: (name: string) => Promise<Channel>;
   onRename: (id: string, name: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  // 계정 전체 저장 영상 개수. 아직 안 불러왔으면 null.
+  videoQuotaCount: number | null;
 }
 
 interface ChannelItemProps {
@@ -148,6 +150,7 @@ function ChannelSidebar({
   onCreate,
   onRename,
   onDelete,
+  videoQuotaCount,
 }: ChannelSidebarProps) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -257,7 +260,12 @@ function ChannelSidebar({
         </nav>
       </div>
 
-      <div className="flex-none border-t border-border p-3">
+      <div className="flex flex-none flex-col gap-1.5 border-t border-border p-3">
+        {videoQuotaCount !== null && (
+          <p className="px-1 text-xs text-muted-foreground">
+            영상 {videoQuotaCount}/{MAX_VIDEOS_PER_USER}개 저장됨
+          </p>
+        )}
         <AuthButton />
       </div>
     </div>

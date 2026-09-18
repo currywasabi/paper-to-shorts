@@ -13,8 +13,12 @@ function LoginPrompt() {
         </div>
       </div>
       <div className="flex flex-col gap-1.5">
-        <h1 className="font-heading text-xl font-semibold tracking-tight text-foreground">
-          로그인해서 쇼츠로 공부해요
+        <h1 className="font-heading text-l font-semibold tracking-tight text-foreground">
+          논문 리뷰, 강의 예습해야 하지만 정말 하기 싫을 때<br />
+          AI가 요약해줘도 도저히 글이 눈에 안 들어올 때<br />
+        </h1>
+        <h1 className="font-heading text-xl font-bold tracking-tight text-foreground">
+          PAPERtoSHORTS로 공부해요
         </h1>
       </div>
       <div className="w-full max-w-xs">

@@ -114,3 +114,16 @@ export async function incrementVideoView(id: string): Promise<void> {
   const { error } = await supabase.rpc('increment_video_view', { video_id: id });
   if (error) throw new Error(error.message);
 }
+
+// DB의 enforce_video_quota 트리거(20260918190430 마이그레이션)와 값을 맞춰야 한다.
+export const MAX_VIDEOS_PER_USER = 5;
+
+/** 계정 전체(모든 채널 합산) 저장된 영상 개수 — 쿼터 표시용. 행 데이터 없이 개수만 센다. */
+export async function getVideoCount(): Promise<number> {
+  const supabase = getSupabaseClient();
+  const { count, error } = await supabase
+    .from('videos')
+    .select('id', { count: 'exact', head: true });
+  if (error) throw new Error(error.message);
+  return count ?? 0;
+}

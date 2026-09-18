@@ -5,6 +5,7 @@ import LoginPrompt from "./components/LoginPrompt";
 import VideoGallery from "./components/VideoGallery";
 import { useChannels } from "./lib/useChannels";
 import { useSession } from "./lib/useSession";
+import { useVideoQuota } from "./lib/useVideoQuota";
 import { useVideos } from "./lib/useVideos";
 
 function App() {
@@ -26,6 +27,12 @@ function App() {
     error: videosError,
     refresh: refreshVideos,
   } = useVideos(selectedChannelId);
+  const { count: videoQuotaCount, refresh: refreshVideoQuota } = useVideoQuota();
+
+  function handleVideoSaved() {
+    refreshVideos();
+    refreshVideoQuota();
+  }
 
   return (
     <div className="flex h-svh flex-col">
@@ -48,6 +55,7 @@ function App() {
               onCreate={createChannel}
               onRename={renameChannel}
               onDelete={removeChannel}
+              videoQuotaCount={videoQuotaCount}
             />
           </aside>
           <main className="flex-1 overflow-hidden p-6">
@@ -57,7 +65,7 @@ function App() {
               videos={videos}
               loading={videosLoading}
               error={videosError}
-              onSaved={refreshVideos}
+              onSaved={handleVideoSaved}
             />
           </main>
         </div>
