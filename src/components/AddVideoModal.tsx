@@ -174,6 +174,10 @@ function AddVideoModal({ open, onOpenChange, channels, contextChannelId, onSaved
           <p className="text-xs text-muted-foreground">
             글씨가 조밀한 파일이나 고난도 논문은 인식하지 못할 수 있습니다.
           </p>
+          <p className="text-xs text-muted-foreground">
+            동영상 양산, 지나치게 긴 PDF 파일 업로드는 자제 부탁드립니다. 제 Gemini API 한도가
+            해커톤 마무리 때까지 버틸 수 있도록 도와주시면 감사하겠습니다 ㅠㅠ
+          </p>
         </DialogHeader>
 
         {(stage === 'idle' || stage === 'summarizing') && (
