@@ -177,8 +177,12 @@ function ChannelSidebar({
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+    // 스크롤되는 채널 목록 + 항상 보이는 하단 계정 영역. grid의 1fr 트랙은 flex와 달리
+    // 기본적으로 min-height: 0이라, 채널이 많아서 넘쳐도 목록만 스크롤되고 하단이 밀려나지 않는다
+    // (세로로 짧은 화면에서 하단 계정 영역이 잘려 보이던 문제 — flex+min-h-0 조합은 중첩 상황에서
+    // 깨지기 쉬워서 grid로 바꿨다).
+    <div className="grid h-full grid-rows-[minmax(0,1fr)_auto]">
+      <div className="flex flex-col gap-3 overflow-y-auto p-4">
         <div className="flex items-center justify-between">
           <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">채널</h2>
           <Button

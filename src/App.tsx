@@ -30,7 +30,8 @@ function App() {
     refresh: refreshVideos,
   } = useVideos(selectedChannelId);
   const { count: videoQuotaCount, refresh: refreshVideoQuota } = useVideoQuota();
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // 좁은 화면(모바일 기준선)에선 기본으로 접어서 시작한다 — 이후엔 헤더 토글로 직접 열고 닫는다.
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 768);
 
   function handleVideoSaved() {
     refreshVideos();
@@ -59,10 +60,22 @@ function App() {
           <LoginPrompt />
         </main>
       ) : (
-        <div className="flex min-h-0 flex-1">
+        <div className="relative flex min-h-0 flex-1">
+          {/* 모바일에서만: 사이드바 뒤 어두운 배경. 탭하면 닫힘. 데스크탑(md~)에선 안 씀. */}
+          {sidebarOpen && (
+            <button
+              type="button"
+              aria-label="사이드바 닫기"
+              onClick={() => setSidebarOpen(false)}
+              className="absolute inset-0 z-30 bg-black/40 md:hidden"
+            />
+          )}
+
           <aside
-            className={`flex-none overflow-hidden border-r border-border bg-secondary/30 backdrop-blur-md transition-[width] duration-200 ${
-              sidebarOpen ? 'w-[260px]' : 'w-0 border-r-0'
+            className={`absolute inset-y-0 left-0 z-40 w-[260px] flex-none overflow-hidden border-r border-border bg-secondary/95 backdrop-blur-md transition-transform duration-200 md:static md:z-auto md:bg-secondary/30 md:transition-[width] ${
+              sidebarOpen
+                ? 'translate-x-0 md:w-[260px]'
+                : '-translate-x-full md:w-0 md:translate-x-0 md:border-r-0'
             }`}
           >
             <div className="h-full w-[260px]">
@@ -70,7 +83,10 @@ function App() {
                 channels={channels}
                 loading={channelsLoading}
                 selectedChannelId={selectedChannelId}
-                onSelect={setSelectedChannelId}
+                onSelect={(id) => {
+                  setSelectedChannelId(id);
+                  if (window.innerWidth < 768) setSidebarOpen(false);
+                }}
                 onCreate={createChannel}
                 onRename={renameChannel}
                 onDelete={removeChannel}
@@ -78,7 +94,7 @@ function App() {
               />
             </div>
           </aside>
-          <main className="flex-1 overflow-hidden p-6">
+          <main className="min-w-0 flex-1 overflow-hidden p-6">
             <VideoGallery
               channels={channels}
               selectedChannelId={selectedChannelId}

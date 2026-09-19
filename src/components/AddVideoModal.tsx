@@ -1,26 +1,26 @@
-import { useEffect, useRef, useState } from 'react';
-import { Player } from '@remotion/player';
-import * as pdfjsLib from 'pdfjs-dist';
-import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { useEffect, useRef, useState } from "react";
+import { Player } from "@remotion/player";
+import * as pdfjsLib from "pdfjs-dist";
+import type { PDFDocumentProxy } from "pdfjs-dist";
 
-import { Button } from './ui/button';
+import { Button } from "./ui/button";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from './ui/dialog';
-import type { Channel } from '../lib/channels';
-import { MAX_FILE_SIZE, validatePdfFile } from '../lib/pdfFile';
-import { saveVideo } from '../lib/saveVideo';
-import { summarizeScript } from '../lib/summarizeScript';
-import { totalDurationInFrames } from '../remotion/layout';
-import { ShortsVideo } from '../remotion/ShortsVideo';
-import type { ShortScript } from '../schema';
+} from "./ui/dialog";
+import type { Channel } from "../lib/channels";
+import { MAX_FILE_SIZE, validatePdfFile } from "../lib/pdfFile";
+import { saveVideo } from "../lib/saveVideo";
+import { summarizeScript } from "../lib/summarizeScript";
+import { totalDurationInFrames } from "../remotion/layout";
+import { ShortsVideo } from "../remotion/ShortsVideo";
+import type { ShortScript } from "../schema";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
+  "pdfjs-dist/build/pdf.worker.min.mjs",
   import.meta.url,
 ).toString();
 
@@ -31,12 +31,12 @@ const HEIGHT = 1920;
 // summarize-script는 한 요청 안에서 PDF 업로드 → Gemini 분석 → 씬별 TTS 합성을 순서대로 처리한다.
 // 서버가 중간 진행 상황을 스트리밍해주진 않으니, 각 단계가 보통 걸리는 시간을 기준으로 대략 흉내만 낸다.
 const SUMMARIZE_STAGES = [
-  { afterMs: 0, label: 'PDF를 Gemini에 업로드하는 중' },
-  { afterMs: 3_000, label: 'Gemini가 대본을 작성하는 중' },
-  { afterMs: 23_000, label: 'Google Cloud TTS로 나레이션 음성 합성하는 중' },
+  { afterMs: 0, label: "PDF를 Gemini에 업로드하는 중" },
+  { afterMs: 3_000, label: "Gemini가 대본을 작성하는 중" },
+  { afterMs: 23_000, label: "Google Cloud TTS로 나레이션 음성 합성하는 중" },
 ] as const;
 
-type Stage = 'idle' | 'summarizing' | 'ready' | 'saving';
+type Stage = "idle" | "summarizing" | "ready" | "saving";
 
 export interface AddVideoModalProps {
   open: boolean;
@@ -49,11 +49,14 @@ export interface AddVideoModalProps {
 
 /** cut 블록이 참조하는 페이지들을 미리 렌더링해서 캐싱한다 — 재생 중 즉석 렌더링은
  * 나레이션 오디오 재생 시작과 경합해서 뺐다(ScriptStudio에서 쓰던 방식 그대로). */
-async function renderCutPages(pdf: PDFDocumentProxy, script: ShortScript): Promise<Record<number, string>> {
+async function renderCutPages(
+  pdf: PDFDocumentProxy,
+  script: ShortScript,
+): Promise<Record<number, string>> {
   const pages = new Set<number>();
   for (const scene of script.scenes) {
     for (const block of scene.blocks) {
-      if (block.type === 'cut') pages.add(block.page);
+      if (block.type === "cut") pages.add(block.page);
     }
   }
 
@@ -62,27 +65,35 @@ async function renderCutPages(pdf: PDFDocumentProxy, script: ShortScript): Promi
       try {
         const page = await pdf.getPage(pageNum);
         const viewport = page.getViewport({ scale: 2 });
-        const canvas = document.createElement('canvas');
+        const canvas = document.createElement("canvas");
         canvas.width = viewport.width;
         canvas.height = viewport.height;
-        const context = canvas.getContext('2d');
+        const context = canvas.getContext("2d");
         if (!context) return null;
 
         await page.render({ canvas, canvasContext: context, viewport }).promise;
-        return [pageNum, canvas.toDataURL('image/png')];
+        return [pageNum, canvas.toDataURL("image/png")];
       } catch {
         return null;
       }
     }),
   );
 
-  return Object.fromEntries(entries.filter((e): e is [number, string] => e !== null));
+  return Object.fromEntries(
+    entries.filter((e): e is [number, string] => e !== null),
+  );
 }
 
 /** PDF 업로드 → (로딩만 보여주며) 대본+나레이션 생성 → 미리보기 → 채널 저장까지의 전체 흐름.
  * 생성 중간 결과(JSON)는 사용자에게 보여주지 않는다 — 편집 도구는 없고, 결과 미리보기와 저장/취소만 있다. */
-function AddVideoModal({ open, onOpenChange, channels, contextChannelId, onSaved }: AddVideoModalProps) {
-  const [stage, setStage] = useState<Stage>('idle');
+function AddVideoModal({
+  open,
+  onOpenChange,
+  channels,
+  contextChannelId,
+  onSaved,
+}: AddVideoModalProps) {
+  const [stage, setStage] = useState<Stage>("idle");
   const [dragging, setDragging] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const [summarizeStage, setSummarizeStage] = useState<string | null>(null);
@@ -90,14 +101,14 @@ function AddVideoModal({ open, onOpenChange, channels, contextChannelId, onSaved
   const [saveError, setSaveError] = useState<string | null>(null);
   const [script, setScript] = useState<ShortScript | null>(null);
   const [pageImages, setPageImages] = useState<Record<number, string>>({});
-  const [targetChannelId, setTargetChannelId] = useState<string>('');
+  const [targetChannelId, setTargetChannelId] = useState<string>("");
 
   const inputRef = useRef<HTMLInputElement>(null);
 
   // 모달을 다시 열 때마다 깨끗한 상태로 시작한다.
   useEffect(() => {
     if (!open) return;
-    setStage('idle');
+    setStage("idle");
     setDragging(false);
     setFileError(null);
     setSummarizeStage(null);
@@ -105,7 +116,7 @@ function AddVideoModal({ open, onOpenChange, channels, contextChannelId, onSaved
     setSaveError(null);
     setScript(null);
     setPageImages({});
-    setTargetChannelId(contextChannelId ?? channels[0]?.id ?? '');
+    setTargetChannelId(contextChannelId ?? channels[0]?.id ?? "");
   }, [open, contextChannelId, channels]);
 
   async function handleFile(file: File | null) {
@@ -118,7 +129,7 @@ function AddVideoModal({ open, onOpenChange, channels, contextChannelId, onSaved
     }
     setFileError(null);
 
-    setStage('summarizing');
+    setStage("summarizing");
     setSummarizeStage(SUMMARIZE_STAGES[0].label);
     const timers = SUMMARIZE_STAGES.slice(1).map(({ afterMs, label }) =>
       setTimeout(() => setSummarizeStage(label), afterMs),
@@ -126,16 +137,22 @@ function AddVideoModal({ open, onOpenChange, channels, contextChannelId, onSaved
 
     try {
       const [pdf, generated] = await Promise.all([
-        file.arrayBuffer().then((buffer) => pdfjsLib.getDocument({ data: buffer }).promise),
+        file
+          .arrayBuffer()
+          .then((buffer) => pdfjsLib.getDocument({ data: buffer }).promise),
         summarizeScript(file),
       ]);
       const images = await renderCutPages(pdf, generated);
       setPageImages(images);
       setScript(generated);
-      setStage('ready');
+      setStage("ready");
     } catch (err) {
-      setSummarizeError(err instanceof Error ? err.message : '대본 생성 중 오류가 발생했습니다.');
-      setStage('idle');
+      setSummarizeError(
+        err instanceof Error
+          ? err.message
+          : "대본 생성 중 오류가 발생했습니다.",
+      );
+      setStage("idle");
     } finally {
       timers.forEach(clearTimeout);
       setSummarizeStage(null);
@@ -151,15 +168,17 @@ function AddVideoModal({ open, onOpenChange, channels, contextChannelId, onSaved
   async function handleSave() {
     if (!script || !targetChannelId) return;
 
-    setStage('saving');
+    setStage("saving");
     setSaveError(null);
     try {
       await saveVideo({ channelId: targetChannelId, script, pageImages });
       onSaved();
       onOpenChange(false);
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : '저장 중 오류가 발생했습니다.');
-      setStage('ready');
+      setSaveError(
+        err instanceof Error ? err.message : "저장 중 오류가 발생했습니다.",
+      );
+      setStage("ready");
     }
   }
 
@@ -170,23 +189,25 @@ function AddVideoModal({ open, onOpenChange, channels, contextChannelId, onSaved
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>동영상 추가</DialogTitle>
-          <DialogDescription>PDF를 업로드하면 쇼츠 대본과 나레이션을 자동으로 만듭니다.</DialogDescription>
+          <DialogDescription>
+            PDF를 업로드하면 쇼츠 대본과 나레이션을 자동으로 만듭니다.
+          </DialogDescription>
           <p className="text-xs text-muted-foreground">
-            글씨가 조밀한 파일이나 고난도 논문은 인식하지 못할 수 있습니다.
-          </p>
-          <p className="text-xs text-muted-foreground">
-            동영상 양산, 지나치게 긴 PDF 파일 업로드는 자제 부탁드립니다. 제 Gemini API 한도가
+            글씨가 조밀한 파일은 인식하지 못할 수 있습니다. 또한 지나치게 페이지
+            수가 많은 파일 업로드는 지양 부탁드립니다. 부디 Gemini API 한도가
             해커톤 마무리 때까지 버틸 수 있도록 도와주시면 감사하겠습니다 ㅠㅠ
           </p>
         </DialogHeader>
 
-        {(stage === 'idle' || stage === 'summarizing') && (
+        {(stage === "idle" || stage === "summarizing") && (
           <div className="flex flex-col gap-3">
             <button
               type="button"
-              disabled={stage === 'summarizing'}
+              disabled={stage === "summarizing"}
               className={`rounded-xl border-2 border-dashed p-10 text-center text-sm text-muted-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                dragging ? 'border-primary bg-primary/5' : 'border-border hover:border-primary hover:bg-primary/5'
+                dragging
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:border-primary hover:bg-primary/5"
               }`}
               onClick={() => inputRef.current?.click()}
               onDragOver={(e) => {
@@ -196,14 +217,14 @@ function AddVideoModal({ open, onOpenChange, channels, contextChannelId, onSaved
               onDragLeave={() => setDragging(false)}
               onDrop={onDrop}
             >
-              {stage === 'summarizing' ? (
+              {stage === "summarizing" ? (
                 <span className="flex flex-col items-center gap-3">
                   <span
                     aria-hidden
                     className="size-8 animate-spin rounded-full border-2 border-primary/20 border-t-primary"
                   />
                   <span className="text-xs font-medium tracking-wide text-primary uppercase">
-                    {summarizeStage ?? '생성하는 중'}
+                    {summarizeStage ?? "생성하는 중"}
                   </span>
                 </span>
               ) : (
@@ -221,14 +242,20 @@ function AddVideoModal({ open, onOpenChange, channels, contextChannelId, onSaved
               hidden
               onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
             />
-            {fileError && <p className="text-sm text-destructive">{fileError}</p>}
-            {summarizeError && <p className="text-sm text-destructive">{summarizeError}</p>}
+            {fileError && (
+              <p className="text-sm text-destructive">{fileError}</p>
+            )}
+            {summarizeError && (
+              <p className="text-sm text-destructive">{summarizeError}</p>
+            )}
           </div>
         )}
 
-        {(stage === 'ready' || stage === 'saving') && script && inputProps && (
+        {(stage === "ready" || stage === "saving") && script && inputProps && (
           <div className="flex flex-col gap-4">
-            <p className="font-heading text-sm font-semibold text-foreground">{script.title}</p>
+            <p className="font-heading text-sm font-semibold text-foreground">
+              {script.title}
+            </p>
 
             <div className="flex justify-center rounded-2xl border border-border bg-card/70 p-3 shadow-sm backdrop-blur-md">
               <Player
@@ -238,7 +265,11 @@ function AddVideoModal({ open, onOpenChange, channels, contextChannelId, onSaved
                 fps={FPS}
                 compositionWidth={WIDTH}
                 compositionHeight={HEIGHT}
-                style={{ width: '100%', maxWidth: 220, aspectRatio: `${WIDTH} / ${HEIGHT}` }}
+                style={{
+                  width: "100%",
+                  maxWidth: 220,
+                  aspectRatio: `${WIDTH} / ${HEIGHT}`,
+                }}
                 acknowledgeRemotionLicense
                 controls
               />
@@ -247,7 +278,8 @@ function AddVideoModal({ open, onOpenChange, channels, contextChannelId, onSaved
             {contextChannelId ? (
               <p className="text-sm text-muted-foreground">
                 <span className="font-medium text-foreground">
-                  {channels.find((c) => c.id === contextChannelId)?.name ?? '이 채널'}
+                  {channels.find((c) => c.id === contextChannelId)?.name ??
+                    "이 채널"}
                 </span>
                 에 저장됩니다.
               </p>
@@ -274,14 +306,25 @@ function AddVideoModal({ open, onOpenChange, channels, contextChannelId, onSaved
               </p>
             )}
 
-            {saveError && <p className="text-sm text-destructive">{saveError}</p>}
+            {saveError && (
+              <p className="text-sm text-destructive">{saveError}</p>
+            )}
 
             <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={() => setStage('idle')} disabled={stage === 'saving'}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setStage("idle")}
+                disabled={stage === "saving"}
+              >
                 다시 만들기
               </Button>
-              <Button type="button" onClick={handleSave} disabled={stage === 'saving' || !targetChannelId}>
-                {stage === 'saving' ? '저장 중...' : '채널에 저장'}
+              <Button
+                type="button"
+                onClick={handleSave}
+                disabled={stage === "saving" || !targetChannelId}
+              >
+                {stage === "saving" ? "저장 중..." : "채널에 저장"}
               </Button>
             </div>
           </div>
